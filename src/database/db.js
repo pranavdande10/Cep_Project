@@ -114,6 +114,8 @@ const initDb = () => {
                     source_url       TEXT UNIQUE,
                     source_website   TEXT,
                     status           TEXT DEFAULT 'pending',
+                    approved_by      INTEGER,
+                    approved_at      DATETIME,
                     created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_updated     DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -139,6 +141,8 @@ const initDb = () => {
                     source_url                 TEXT UNIQUE,
                     source_website             TEXT,
                     status                     TEXT DEFAULT 'pending',
+                    approved_by                INTEGER,
+                    approved_at                DATETIME,
                     created_at                 DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_updated               DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -279,7 +283,7 @@ const initDb = () => {
             `);
 
             // ── Seed: crawler_status singleton ─────────────────────────────
-            db.run(`INSERT OR IGNORE INTO crawler_status (id) VALUES (1)`, [], function(err) {
+            db.run(`INSERT OR IGNORE INTO crawler_status (id) VALUES (1), (2), (3)`, [], function(err) {
                 if (err) return reject(err);
                 resolve();
             });

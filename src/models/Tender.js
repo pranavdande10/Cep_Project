@@ -10,14 +10,13 @@ class TenderModel {
         let paramCount = 0;
 
         if (state) {
-            paramCount++;
-            queryText += ` AND state = $${paramCount}`;
+            queryText += ` AND LOWER(state) = LOWER(?)`;
             params.push(state);
         }
 
         if (search) {
-            paramCount++;
-            queryText += ` AND (tender_name LIKE $${paramCount} OR description LIKE $${paramCount})`;
+            queryText += ` AND (tender_name LIKE ? OR description LIKE ?)`;
+            params.push(`%${search}%`);
             params.push(`%${search}%`);
         }
 
@@ -31,14 +30,13 @@ class TenderModel {
             queryText += ' ORDER BY created_at DESC';
         }
 
-        paramCount++;
-        queryText += ` LIMIT $${paramCount}`;
+        queryText += ` LIMIT ?`;
         params.push(limit);
 
-        paramCount++;
-        queryText += ` OFFSET $${paramCount}`;
+        queryText += ` OFFSET ?`;
         params.push(offset);
 
+        // Execute queries
         const result = await query(queryText, params);
 
         let countQuery = `SELECT COUNT(*) as total FROM tenders WHERE status = 'approved'`;
@@ -46,14 +44,13 @@ class TenderModel {
         let countParamCount = 0;
 
         if (state) {
-            countParamCount++;
-            countQuery += ` AND state = $${countParamCount}`;
+            countQuery += ` AND LOWER(state) = LOWER(?)`;
             countParams.push(state);
         }
 
         if (search) {
-            countParamCount++;
-            countQuery += ` AND (tender_name LIKE $${countParamCount} OR description LIKE $${countParamCount})`;
+            countQuery += ` AND (tender_name LIKE ? OR description LIKE ?)`;
+            countParams.push(`%${search}%`);
             countParams.push(`%${search}%`);
         }
 
@@ -67,7 +64,7 @@ class TenderModel {
 
     static async getById(id) {
         const result = await query(
-            'SELECT * FROM tenders WHERE id = $1 AND status = $2',
+            'SELECT * FROM tenders WHERE id = ? AND status = ?',
             [id, 'approved']
         );
         return result.rows[0];
@@ -79,14 +76,31 @@ class TenderModel {
         tender_name, tender_id, reference_number, state, department, ministry,
         tender_type, published_date, opening_date, closing_date, description,
         documents_required, fee_details, source_url, source_website,
-        status, approved_by, approved_at, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(source_url) DO UPDATE SET
+        tender_name = excluded.tender_name,
+        tender_id = excluded.tender_id,
+        reference_number = excluded.reference_number,
+        state = excluded.state,
+        department = excluded.department,
+        ministry = excluded.ministry,
+        tender_type = excluded.tender_type,
+        published_date = excluded.published_date,
+        opening_date = excluded.opening_date,
+        closing_date = excluded.closing_date,
+        description = excluded.description,
+        documents_required = excluded.documents_required,
+        fee_details = excluded.fee_details,
+        source_website = excluded.source_website,
+        status = excluded.status,
+        last_updated = CURRENT_TIMESTAMP`,
             [
                 data.tender_name, data.tender_id, data.reference_number, data.state,
                 data.department, data.ministry, data.tender_type, data.published_date,
                 data.opening_date, data.closing_date, data.description,
                 data.documents_required, data.fee_details, data.source_url,
-                data.source_website, 'approved', adminId
+                data.source_website, 'approved'
             ]
         );
 
@@ -98,26 +112,62 @@ class TenderModel {
 
     static async update(id, data) {
         await query(
-            `UPDATE tenders SET
-        tender_name = COALESCE($1, tender_name),
-        description = COALESCE($2, description),
-        state = COALESCE($3, state),
-        department = COALESCE($4, department),
-        ministry = COALESCE($5, ministry),
-        tender_type = COALESCE($6, tender_type),
-        closing_date = COALESCE($7, closing_date),
-        last_updated = CURRENT_TIMESTAMP
-      WHERE id = $8`,
+            `UPDATE tenders SET 
+        tender_name = ?, tender_id = ?, reference_number = ?, state = ?, 
+        department = ?, ministry = ?, tender_type = ?, published_date = ?, 
+        opening_date = ?, closing_date = ?, description = ?, documents_required = ?, 
+        fee_details = ?, source_url = ?, source_website = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
             [
-                data.tender_name, data.description, data.state, data.department,
-                data.ministry, data.tender_type, data.closing_date, id
+                data.tender_name, data.tender_id, data.reference_number, data.state,
+                data.department, data.ministry, data.tender_type, data.published_date,
+                data.opening_date, data.closing_date, data.description,
+                data.documents_required, data.fee_details, data.source_url,
+                data.source_website, id
             ]
         );
         return await this.getById(id);
     }
 
+    static async updateStatus(id, status, adminId, reason = null) {
+        await query(
+            `UPDATE tenders SET 
+        status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, 
+        rejection_reason = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+            [status, adminId, reason, id]
+        );
+        return true;
+    }
+
     static async delete(id) {
-        await query('DELETE FROM tenders WHERE id = $1', [id]);
+        await query('DELETE FROM tenders WHERE id = ?', [id]);
+        return true;
+    }
+
+    static async getStats() {
+        const result = await query(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+      FROM tenders
+    `);
+        return result.rows[0];
+    }
+
+    static async getFilters() {
+        const stateResult = await query(`SELECT DISTINCT state FROM tenders WHERE status = 'approved' AND state IS NOT NULL ORDER BY state`);
+        const deptResult = await query(`SELECT DISTINCT department FROM tenders WHERE status = 'approved' AND department IS NOT NULL ORDER BY department`);
+        const typeResult = await query(`SELECT DISTINCT tender_type FROM tenders WHERE status = 'approved' AND tender_type IS NOT NULL ORDER BY tender_type`);
+        
+        return {
+            states: stateResult.rows.map(r => r.state),
+            ministries: deptResult.rows.map(r => r.department),
+            categories: typeResult.rows.map(r => r.tender_type),
+            levels: ['Central', 'State']
+        };
     }
 }
 

@@ -102,13 +102,25 @@ exports.getStats = async (req, res, next) => {
 exports.getFilterOptions = async (req, res, next) => {
     try {
         const categories = await query("SELECT DISTINCT category FROM schemes WHERE category IS NOT NULL ORDER BY category");
-        const states = await query("SELECT DISTINCT state FROM schemes WHERE state IS NOT NULL ORDER BY state");
+        const ministries = await query("SELECT DISTINCT ministry FROM schemes WHERE ministry IS NOT NULL ORDER BY ministry");
+        const levels = await query("SELECT DISTINCT level FROM schemes WHERE level IS NOT NULL ORDER BY level");
+
+        const staticStates = [
+            "All India", "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", 
+            "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", 
+            "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", 
+            "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", 
+            "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", 
+            "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"
+        ];
 
         res.json({
             success: true,
             filters: {
                 categories: categories.rows.map(r => r.category),
-                states: states.rows.map(r => r.state)
+                ministries: ministries.rows.map(r => r.ministry),
+                levels: levels.rows.map(r => r.level),
+                states: staticStates
             }
         });
     } catch (error) {

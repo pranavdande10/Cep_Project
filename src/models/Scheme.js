@@ -33,7 +33,7 @@ class SchemeModel {
 
         if (state) {
             paramCount++;
-            queryText += ` AND state = $${paramCount}`;
+            queryText += ` AND LOWER(state) = LOWER($${paramCount})`;
             params.push(state);
         }
 
@@ -71,7 +71,7 @@ class SchemeModel {
 
         if (state) {
             countParamCount++;
-            countQuery += ` AND state = $${countParamCount}`;
+            countQuery += ` AND LOWER(state) = LOWER($${countParamCount})`;
             countParams.push(state);
         }
 
@@ -130,6 +130,18 @@ class SchemeModel {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
                 $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
             )
+            ON CONFLICT(external_id) DO UPDATE SET
+                slug = excluded.slug, title = excluded.title, short_title = excluded.short_title,
+                description = excluded.description, detailed_description = excluded.detailed_description,
+                ministry = excluded.ministry, department = excluded.department, category = excluded.category,
+                sub_category = excluded.sub_category, level = excluded.level, scheme_type = excluded.scheme_type,
+                benefits = excluded.benefits, eligibility = excluded.eligibility, application_process = excluded.application_process,
+                documents_required = excluded.documents_required, faqs = excluded.faqs, tags = excluded.tags,
+                target_beneficiaries = excluded.target_beneficiaries, open_date = excluded.open_date, close_date = excluded.close_date,
+                application_url = excluded.application_url, contact_info = excluded.contact_info, "references" = excluded."references",
+                applicable_states = excluded.applicable_states, state = excluded.state, lang = excluded.lang,
+                translations = excluded.translations, raw_data = excluded.raw_data, status = excluded.status,
+                last_updated = CURRENT_TIMESTAMP
         `, [
             data.external_id, data.slug, data.title, data.short_title,
             data.description, JSON.stringify(data.detailed_description || []),

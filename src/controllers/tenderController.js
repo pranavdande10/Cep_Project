@@ -1,6 +1,6 @@
-import TenderModel from '../models/Tender.js';
+const TenderModel = require('../models/Tender.js');
 
-export const getTenders = async (req, res) => {
+exports.getTenders = async (req, res) => {
     try {
         const { state, search, department, type, sort, page = 1, limit = 10 } = req.query;
         const offset = (page - 1) * limit;
@@ -20,11 +20,20 @@ export const getTenders = async (req, res) => {
     }
 };
 
-export const getTenderById = async (req, res) => {
+exports.getTenderById = async (req, res) => {
     try {
         const tender = await TenderModel.getById(req.params.id);
         if (!tender) return res.status(404).json({ success: false, message: 'Tender not found' });
         res.json({ success: true, data: tender });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+exports.getFilters = async (req, res) => {
+    try {
+        const filters = await TenderModel.getFilters();
+        res.json({ success: true, filters: filters });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

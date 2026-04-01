@@ -1,9 +1,10 @@
-import express from 'express';
-import { getTenders, getTenderById } from '../controllers/tenderController.js';
+const express = require('express');
+const { getTenders, getTenderById, getFilters } = require('../controllers/tenderController.js');
 
 const router = express.Router();
 
+router.get('/filters', getFilters);
 router.get('/', getTenders);
 router.get('/:id', getTenderById);
 
-export default router;
+module.exports = router;

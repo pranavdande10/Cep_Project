@@ -239,14 +239,9 @@ exports.startMySchemeCrawler = async (req, res, next) => {
  */
 exports.pauseMySchemeCrawler = async (req, res, next) => {
     try {
-        if (!mySchemeCrawlerInstance) {
-            return res.status(400).json({
-                success: false,
-                message: 'No MyScheme crawler instance is running'
-            });
+        if (mySchemeCrawlerInstance) {
+            mySchemeCrawlerInstance.pause();
         }
-
-        mySchemeCrawlerInstance.pause();
 
         // Update job status
         await query(`
@@ -268,19 +263,44 @@ exports.pauseMySchemeCrawler = async (req, res, next) => {
 };
 
 /**
+ * Resume MyScheme crawler
+ * POST /api/admin/crawler/myscheme/resume
+ */
+exports.resumeMySchemeCrawler = async (req, res, next) => {
+    try {
+        if (mySchemeCrawlerInstance) {
+            mySchemeCrawlerInstance.resume();
+        }
+
+        // Update job status
+        await query(`
+            UPDATE crawler_jobs
+            SET status = 'running', last_updated = CURRENT_TIMESTAMP
+            WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 1)
+        `);
+
+        logger.info(`MyScheme crawler resumed by ${req.admin.email}`);
+
+        res.json({
+            success: true,
+            message: 'MyScheme crawler resumed successfully'
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * Stop MyScheme crawler
  * POST /api/admin/crawler/myscheme/stop
  */
 exports.stopMySchemeCrawler = async (req, res, next) => {
     try {
-        if (!mySchemeCrawlerInstance) {
-            return res.status(400).json({
-                success: false,
-                message: 'No MyScheme crawler instance is running'
-            });
+        if (mySchemeCrawlerInstance) {
+            mySchemeCrawlerInstance.stop();
+            mySchemeCrawlerInstance = null;
         }
-
-        mySchemeCrawlerInstance.stop();
 
         // Update job status
         await query(`
@@ -289,8 +309,8 @@ exports.stopMySchemeCrawler = async (req, res, next) => {
             WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 1)
         `);
 
-        // Clear crawler instance
-        mySchemeCrawlerInstance = null;
+        // Update global status explicitly for CLI processes
+        await query(`UPDATE crawler_status SET is_running = false WHERE id = 1`);
 
         logger.info(`MyScheme crawler stopped by ${req.admin.email}`);
 
@@ -424,3 +444,260 @@ exports.getMySchemeJobs = async (req, res, next) => {
     }
 };
 
+// ============================================
+// Enhanced Tenders Crawler Control
+// ============================================
+
+const TendersCrawler = require('../../services/crawlers/tendersCrawler');
+
+let tendersCrawlerInstance = null;
+
+exports.startTendersCrawler = async (req, res, next) => {
+    try {
+        const { batch_size = 50, location = null } = req.body;
+
+        if (batch_size < 10 || batch_size > 100) {
+            return res.status(400).json({ success: false, message: 'Batch size must be between 10 and 100' });
+        }
+
+        const statusCheck = await query('SELECT is_running, current_job_id FROM crawler_status WHERE id = 2');
+        if (statusCheck.rows[0]?.is_running) {
+            return res.status(409).json({ success: false, message: 'Crawler is already running', job_id: statusCheck.rows[0].current_job_id });
+        }
+
+        tendersCrawlerInstance = new TendersCrawler();
+        tendersCrawlerInstance.batchSize = batch_size;
+
+        tendersCrawlerInstance.crawl(location).catch(error => logger.error('Tenders crawler error:', error));
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const jobResult = await query('SELECT current_job_id FROM crawler_status WHERE id = 2');
+
+        await query(
+            `INSERT INTO audit_logs (admin_id, action, entity_type, entity_id) VALUES ($1, $2, $3, $4)`,
+            [req.admin.id, 'start_tenders_crawler', 'crawler_job', jobResult.rows[0]?.current_job_id]
+        );
+
+        logger.info(`Tenders crawler started by ${req.admin.email} with batch size ${batch_size}`);
+        res.json({ success: true, message: 'Tenders crawler started successfully', job_id: jobResult.rows[0]?.current_job_id, batch_size });
+    } catch (error) { next(error); }
+};
+
+exports.pauseTendersCrawler = async (req, res, next) => {
+    try {
+        if (!tendersCrawlerInstance) return res.status(400).json({ success: false, message: 'No Tenders crawler running' });
+        tendersCrawlerInstance.pause();
+        await query(`UPDATE crawler_jobs SET status = 'paused', last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 2)`);
+        logger.info(`Tenders crawler paused by ${req.admin.email}`);
+        res.json({ success: true, message: 'Tenders crawler paused successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.resumeTendersCrawler = async (req, res, next) => {
+    try {
+        if (!tendersCrawlerInstance) return res.status(400).json({ success: false, message: 'No loaded Tenders crawler' });
+        tendersCrawlerInstance.resume();
+        await query(`UPDATE crawler_jobs SET status = 'running', last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 2)`);
+        logger.info(`Tenders crawler resumed by ${req.admin.email}`);
+        res.json({ success: true, message: 'Tenders crawler resumed successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.stopTendersCrawler = async (req, res, next) => {
+    try {
+        if (!tendersCrawlerInstance) return res.status(400).json({ success: false, message: 'No Tenders crawler running' });
+        tendersCrawlerInstance.stop();
+        await query(`UPDATE crawler_jobs SET status = 'stopped', completed_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 2)`);
+        tendersCrawlerInstance = null;
+        logger.info(`Tenders crawler stopped by ${req.admin.email}`);
+        res.json({ success: true, message: 'Tenders crawler stopped successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.getTendersCrawlerStatus = async (req, res, next) => {
+    try {
+        const statusResult = await query(`SELECT * FROM crawler_status WHERE id = 2`);
+        const status = statusResult.rows[0];
+        if (!status) return res.json({ success: true, data: { is_running: false, current_job: null, last_error: null } });
+
+        let currentJob = null;
+        if (status.current_job_id) {
+            const jobResult = await query(`
+                SELECT *, 
+                ROUND((success_count + failed_count + duplicate_count) * 100.0 / NULLIF(estimated_total, 0)) as progress_percentage
+                FROM crawler_jobs WHERE id = $1
+            `, [status.current_job_id]);
+            currentJob = jobResult.rows[0];
+        }
+
+        res.json({
+            success: true,
+            data: { is_running: status.is_running, last_error: status.last_error, last_updated: status.last_updated },
+            current_job: currentJob
+        });
+    } catch (error) { next(error); }
+};
+
+exports.getTendersJobs = async (req, res, next) => {
+    try {
+        const { page = 1, limit = 10, status } = req.query;
+        const offset = (page - 1) * limit;
+
+        let queryText = `SELECT * FROM crawler_jobs WHERE job_type = 'tenders'`;
+        const params = [];
+        let paramCount = 0;
+
+        if (status) {
+            paramCount++;
+            queryText += ` AND status = $${paramCount}`;
+            params.push(status);
+        }
+
+        queryText += ' ORDER BY started_at DESC LIMIT $' + (++paramCount) + ' OFFSET $' + (++paramCount);
+        params.push(parseInt(limit), offset);
+
+        const result = await query(queryText, params);
+        
+        let countQuery = `SELECT COUNT(*) as total FROM crawler_jobs WHERE job_type = 'tenders'`;
+        const countParams = [];
+        if (status) { countQuery += ` AND status = $1`; countParams.push(status); }
+
+        const countResult = await query(countQuery, countParams);
+        const total = parseInt(countResult.rows[0].total);
+
+        res.json({
+            success: true,
+            data: result.rows,
+            pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / limit) }
+        });
+    } catch (error) { next(error); }
+};
+
+// ============================================
+// Enhanced Recruitments Crawler Control
+// ============================================
+
+const RecruitmentsCrawler = require('../../services/crawlers/recruitmentsCrawler');
+
+let recruitmentsCrawlerInstance = null;
+
+exports.startRecruitmentsCrawler = async (req, res, next) => {
+    try {
+        const { batch_size = 50, location = null } = req.body;
+
+        if (batch_size < 10 || batch_size > 100) {
+            return res.status(400).json({ success: false, message: 'Batch size must be between 10 and 100' });
+        }
+
+        const statusCheck = await query('SELECT is_running, current_job_id FROM crawler_status WHERE id = 3');
+        if (statusCheck.rows[0]?.is_running) {
+            return res.status(409).json({ success: false, message: 'Crawler is already running', job_id: statusCheck.rows[0].current_job_id });
+        }
+
+        recruitmentsCrawlerInstance = new RecruitmentsCrawler();
+        recruitmentsCrawlerInstance.batchSize = batch_size;
+
+        recruitmentsCrawlerInstance.crawl(location).catch(error => logger.error('Recruitments crawler error:', error));
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const jobResult = await query('SELECT current_job_id FROM crawler_status WHERE id = 3');
+
+        await query(
+            `INSERT INTO audit_logs (admin_id, action, entity_type, entity_id) VALUES ($1, $2, $3, $4)`,
+            [req.admin.id, 'start_recruitments_crawler', 'crawler_job', jobResult.rows[0]?.current_job_id]
+        );
+
+        logger.info(`Recruitments crawler started by ${req.admin.email} with batch size ${batch_size}`);
+        res.json({ success: true, message: 'Recruitments crawler started successfully', job_id: jobResult.rows[0]?.current_job_id, batch_size });
+    } catch (error) { next(error); }
+};
+
+exports.pauseRecruitmentsCrawler = async (req, res, next) => {
+    try {
+        if (!recruitmentsCrawlerInstance) return res.status(400).json({ success: false, message: 'No Recruitments crawler running' });
+        recruitmentsCrawlerInstance.pause();
+        await query(`UPDATE crawler_jobs SET status = 'paused', last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 3)`);
+        logger.info(`Recruitments crawler paused by ${req.admin.email}`);
+        res.json({ success: true, message: 'Recruitments crawler paused successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.resumeRecruitmentsCrawler = async (req, res, next) => {
+    try {
+        if (!recruitmentsCrawlerInstance) return res.status(400).json({ success: false, message: 'No loaded Recruitments crawler' });
+        recruitmentsCrawlerInstance.resume();
+        await query(`UPDATE crawler_jobs SET status = 'running', last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 3)`);
+        logger.info(`Recruitments crawler resumed by ${req.admin.email}`);
+        res.json({ success: true, message: 'Recruitments crawler resumed successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.stopRecruitmentsCrawler = async (req, res, next) => {
+    try {
+        if (!recruitmentsCrawlerInstance) return res.status(400).json({ success: false, message: 'No Recruitments crawler running' });
+        recruitmentsCrawlerInstance.stop();
+        await query(`UPDATE crawler_jobs SET status = 'stopped', completed_at = CURRENT_TIMESTAMP, last_updated = CURRENT_TIMESTAMP WHERE id = (SELECT current_job_id FROM crawler_status WHERE id = 3)`);
+        recruitmentsCrawlerInstance = null;
+        logger.info(`Recruitments crawler stopped by ${req.admin.email}`);
+        res.json({ success: true, message: 'Recruitments crawler stopped successfully' });
+    } catch (error) { next(error); }
+};
+
+exports.getRecruitmentsCrawlerStatus = async (req, res, next) => {
+    try {
+        const statusResult = await query(`SELECT * FROM crawler_status WHERE id = 3`);
+        const status = statusResult.rows[0];
+        if (!status) return res.json({ success: true, data: { is_running: false, current_job: null, last_error: null } });
+
+        let currentJob = null;
+        if (status.current_job_id) {
+            const jobResult = await query(`
+                SELECT *, 
+                ROUND((success_count + failed_count + duplicate_count) * 100.0 / NULLIF(estimated_total, 0)) as progress_percentage
+                FROM crawler_jobs WHERE id = $1
+            `, [status.current_job_id]);
+            currentJob = jobResult.rows[0];
+        }
+
+        res.json({
+            success: true,
+            data: { is_running: status.is_running, last_error: status.last_error, last_updated: status.last_updated },
+            current_job: currentJob
+        });
+    } catch (error) { next(error); }
+};
+
+exports.getRecruitmentsJobs = async (req, res, next) => {
+    try {
+        const { page = 1, limit = 10, status } = req.query;
+        const offset = (page - 1) * limit;
+
+        let queryText = `SELECT * FROM crawler_jobs WHERE job_type = 'recruitments'`;
+        const params = [];
+        let paramCount = 0;
+
+        if (status) {
+            paramCount++;
+            queryText += ` AND status = $${paramCount}`;
+            params.push(status);
+        }
+
+        queryText += ' ORDER BY started_at DESC LIMIT $' + (++paramCount) + ' OFFSET $' + (++paramCount);
+        params.push(parseInt(limit), offset);
+
+        const result = await query(queryText, params);
+        
+        let countQuery = `SELECT COUNT(*) as total FROM crawler_jobs WHERE job_type = 'recruitments'`;
+        const countParams = [];
+        if (status) { countQuery += ` AND status = $1`; countParams.push(status); }
+
+        const countResult = await query(countQuery, countParams);
+        const total = parseInt(countResult.rows[0].total);
+
+        res.json({
+            success: true,
+            data: result.rows,
+            pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / limit) }
+        });
+    } catch (error) { next(error); }
+};

@@ -11,7 +11,7 @@ class RecruitmentModel {
 
         if (state) {
             paramCount++;
-            queryText += ` AND state = $${paramCount}`;
+            queryText += ` AND LOWER(state) = LOWER($${paramCount})`;
             params.push(state);
         }
 
@@ -47,7 +47,7 @@ class RecruitmentModel {
 
         if (state) {
             countParamCount++;
-            countQuery += ` AND state = $${countParamCount}`;
+            countQuery += ` AND LOWER(state) = LOWER($${countParamCount})`;
             countParams.push(state);
         }
 
@@ -80,7 +80,26 @@ class RecruitmentModel {
         application_start_date, application_end_date, age_limit, selection_process,
         application_fee, documents_required, official_notification_link,
         source_url, source_website, status, approved_by, approved_at, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(source_url) DO UPDATE SET
+        post_name = excluded.post_name,
+        organization = excluded.organization,
+        state = excluded.state,
+        ministry = excluded.ministry,
+        qualification = excluded.qualification,
+        vacancy_count = excluded.vacancy_count,
+        application_start_date = excluded.application_start_date,
+        application_end_date = excluded.application_end_date,
+        age_limit = excluded.age_limit,
+        selection_process = excluded.selection_process,
+        application_fee = excluded.application_fee,
+        documents_required = excluded.documents_required,
+        official_notification_link = excluded.official_notification_link,
+        source_website = excluded.source_website,
+        status = excluded.status,
+        approved_by = excluded.approved_by,
+        approved_at = CURRENT_TIMESTAMP,
+        last_updated = CURRENT_TIMESTAMP`,
             [
                 data.post_name, data.organization, data.state, data.ministry,
                 data.qualification, data.vacancy_count, data.application_start_date,

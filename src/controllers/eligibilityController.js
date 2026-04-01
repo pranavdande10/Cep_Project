@@ -35,88 +35,80 @@ exports.checkEligibility = async (req, res, next) => {
             `INSERT INTO eligibility_checks (
                 age, gender, state, category, annual_income,
                 has_bank_account, employment_status, occupation_type
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id`,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
             [age, gender, state, category, annual_income, has_bank_account, employment_status, occupation_type]
         );
 
-        const checkId = checkResult.rows[0].id;
+        const checkId = checkResult.lastID;
 
-        // Get matching schemes using eligibility function
-        // For now, we'll use a simplified matching algorithm
-        // The database function can be enhanced later
+        // Fetch all approved schemes
+        const SchemeModel = require('../models/Scheme');
+        const allSchemesResponse = await SchemeModel.getAll({ limit: 1000, offset: 0 });
+        const allSchemes = allSchemesResponse.data;
 
-        let matchQuery = `
-            SELECT 
-                id, slug, title, short_title, description,
-                ministry, department, category, level,
-                benefits, eligibility, tags, applicable_states,
-                (
-                    -- State matching (30 points)
-                    CASE 
-                        WHEN 'All India' = ANY(applicable_states) THEN 30
-                        WHEN $2 = ANY(applicable_states) THEN 30
-                        ELSE 0
-                    END +
-                    
-                    -- Bank account requirement (20 points)
-                    CASE 
-                        WHEN eligibility->>'requires_bank_account' = 'true' AND $5 = true THEN 20
-                        WHEN eligibility->>'requires_bank_account' IS NULL THEN 15
-                        ELSE 0
-                    END +
-                    
-                    -- Category matching (20 points)
-                    CASE 
-                        WHEN eligibility->'categories' @> to_jsonb($3::text) THEN 20
-                        WHEN eligibility->'categories' IS NULL THEN 10
-                        ELSE 0
-                    END +
-                    
-                    -- Age matching (20 points)
-                    CASE 
-                        WHEN eligibility->>'min_age' IS NOT NULL 
-                            AND $1 >= (eligibility->>'min_age')::INTEGER 
-                            AND $1 <= COALESCE((eligibility->>'max_age')::INTEGER, 999)
-                        THEN 20
-                        WHEN eligibility->>'min_age' IS NULL THEN 10
-                        ELSE 0
-                    END +
-                    
-                    -- Income criteria (10 points)
-                    CASE 
-                        WHEN eligibility->>'max_income' IS NOT NULL 
-                            AND $4 <= (eligibility->>'max_income')::DECIMAL 
-                        THEN 10
-                        WHEN eligibility->>'max_income' IS NULL THEN 5
-                        ELSE 0
-                    END
-                ) AS match_score
-            FROM schemes
-            WHERE status = 'approved'
-            HAVING match_score >= 40
-            ORDER BY match_score DESC
-            LIMIT 50
-        `;
+        // Calculate match scores in JavaScript (SQLite-compatible)
+        const scoredSchemes = allSchemes.map(scheme => {
+            let match_score = 0;
+            const applicable_states = scheme.applicable_states || [];
+            const eligibility = scheme.eligibility || {};
 
-        const matchResult = await query(matchQuery, [
-            age,
-            state,
-            category || 'general',
-            annual_income || 0,
-            has_bank_account || false
-        ]);
+            // State matching (30 points)
+            if (applicable_states.includes('All India') || applicable_states.includes(state)) {
+                match_score += 30;
+            }
 
-        const eligibleSchemes = matchResult.rows;
+            // Bank account requirement (20 points)
+            if (eligibility.requires_bank_account === true && has_bank_account === true) {
+                match_score += 20;
+            } else if (eligibility.requires_bank_account === undefined || eligibility.requires_bank_account === null) {
+                match_score += 15;
+            }
+
+            // Category matching (20 points)
+            const schemeCategories = eligibility.categories || [];
+            if (schemeCategories.includes(category)) {
+                match_score += 20;
+            } else if (!schemeCategories || schemeCategories.length === 0) {
+                match_score += 10;
+            }
+
+            // Age matching (20 points)
+            const minAge = parseInt(eligibility.min_age);
+            const maxAge = parseInt(eligibility.max_age) || 999;
+            if (!isNaN(minAge) && age >= minAge && age <= maxAge) {
+                match_score += 20;
+            } else if (isNaN(minAge)) {
+                match_score += 10;
+            }
+
+            // Income criteria (10 points)
+            const maxIncome = parseFloat(eligibility.max_income);
+            if (!isNaN(maxIncome) && annual_income <= maxIncome) {
+                match_score += 10;
+            } else if (isNaN(maxIncome)) {
+                match_score += 5;
+            }
+
+            return { ...scheme, match_score };
+        });
+
+        // Filter and sort schemes
+        const eligibleSchemes = scoredSchemes
+            .filter(s => s.match_score >= 40)
+            .sort((a, b) => b.match_score - a.match_score)
+            .slice(0, 50);
+
         const eligibleCount = eligibleSchemes.length;
 
         // Update eligibility check with results
-        await query(
-            `UPDATE eligibility_checks
-            SET eligible_schemes = $1, eligible_count = $2
-            WHERE id = $3`,
-            [eligibleSchemes.map(s => s.id), eligibleCount, checkId]
-        );
+        if (checkId) {
+            await query(
+                `UPDATE eligibility_checks
+                SET eligible_schemes = $1, eligible_count = $2
+                WHERE id = $3`,
+                [JSON.stringify(eligibleSchemes.map(s => s.id)), eligibleCount, checkId]
+            );
+        }
 
         res.json({
             success: true,

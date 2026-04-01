@@ -157,11 +157,17 @@ async function reviewItem(id) {
 }
 
 async function approveItem() {
-    const data = await apiCall(`/pending/${currentReviewId}/approve`, { method: 'POST' });
-    if (data.success) {
-        alert('Item approved!');
-        document.getElementById('review-modal').style.display = 'none';
-        loadPendingReviews();
+    try {
+        const data = await apiCall(`/pending/${currentReviewId}/approve`, { method: 'POST' });
+        if (data.success) {
+            alert('Item approved!');
+            document.getElementById('review-modal').style.display = 'none';
+            loadPendingReviews();
+        } else {
+            alert('Approval failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Exception: ' + e.message);
     }
 }
 
@@ -171,15 +177,21 @@ function showRejectForm() {
 
 async function rejectItem() {
     const reason = document.getElementById('reject-reason').value;
-    const data = await apiCall(`/pending/${currentReviewId}/reject`, {
-        method: 'POST',
-        body: JSON.stringify({ reason })
-    });
+    try {
+        const data = await apiCall(`/pending/${currentReviewId}/reject`, {
+            method: 'POST',
+            body: JSON.stringify({ reason })
+        });
 
-    if (data.success) {
-        alert('Item rejected!');
-        document.getElementById('review-modal').style.display = 'none';
-        loadPendingReviews();
+        if (data.success) {
+            alert('Item rejected!');
+            document.getElementById('review-modal').style.display = 'none';
+            loadPendingReviews();
+        } else {
+            alert('Rejection failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Exception: ' + e.message);
     }
 }
 
@@ -193,6 +205,14 @@ async function loadCrawlers() {
 
     // Load MyScheme jobs
     await loadMySchemeJobs();
+
+    // Load Tenders crawler status & jobs
+    await refreshTendersCrawlerStatus();
+    await loadTendersJobs();
+
+    // Load Recruitments crawler status & jobs
+    await refreshRecruitmentsCrawlerStatus();
+    await loadRecruitmentsJobs();
 
     // Load legacy sources
     const sources = await apiCall('/sources');
@@ -269,6 +289,25 @@ async function pauseMySchemeCrawler() {
         }
     } catch (error) {
         alert('Error pausing crawler');
+        console.error(error);
+    }
+}
+
+async function resumeMySchemeCrawler() {
+    try {
+        const data = await apiCall('/crawler/myscheme/resume', {
+            method: 'POST'
+        });
+
+        if (data.success) {
+            alert('Crawler resumed!');
+            await refreshCrawlerStatus();
+            startAutoRefresh();
+        } else {
+            alert(`Failed to resume crawler: ${data.message}`);
+        }
+    } catch (error) {
+        alert('Error resuming crawler');
         console.error(error);
     }
 }
@@ -369,11 +408,13 @@ function updateCrawlerUI(status, currentJob) {
     } else if (currentJob && currentJob.status === 'paused') {
         startBtn.style.display = 'inline-block';
         startBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+        startBtn.onclick = resumeMySchemeCrawler;
         pauseBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
     } else {
         startBtn.style.display = 'inline-block';
         startBtn.innerHTML = '<i class="fas fa-play"></i> Start Crawler';
+        startBtn.onclick = startMySchemeCrawler;
         pauseBtn.style.display = 'none';
         stopBtn.style.display = 'none';
     }
@@ -466,6 +507,410 @@ function stopAutoRefresh() {
 }
 
 // ============================================
+// TENDERS CRAWLER CONTROL
+// ============================================
+
+let tendersCrawlerStatusInterval = null;
+
+async function startTendersCrawler() {
+    const batchSize = document.getElementById('tenders-batch-size').value;
+    const location = document.getElementById('tenders-target-location').value.trim();
+
+    try {
+        const data = await apiCall('/crawler/tenders/start', {
+            method: 'POST',
+            body: JSON.stringify({ 
+                batch_size: parseInt(batchSize),
+                location: location || null
+            })
+        });
+
+        if (data.success) {
+            alert(`Tenders Crawler started with batch size ${batchSize}!`);
+            await refreshTendersCrawlerStatus();
+            startTendersAutoRefresh();
+        } else {
+            alert(`Failed to start crawler: ${data.message}`);
+        }
+    } catch (error) {
+        alert('Error starting Tenders crawler');
+        console.error(error);
+    }
+}
+
+async function pauseTendersCrawler() {
+    try {
+        const data = await apiCall('/crawler/tenders/pause', { method: 'POST' });
+        if (data.success) {
+            alert('Tenders Crawler paused!');
+            await refreshTendersCrawlerStatus();
+        } else {
+            alert(`Failed to pause crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function resumeTendersCrawler() {
+    try {
+        const data = await apiCall('/crawler/tenders/resume', { method: 'POST' });
+        if (data.success) {
+            alert('Tenders Crawler resumed!');
+            await refreshTendersCrawlerStatus();
+            startTendersAutoRefresh();
+        } else {
+            alert(`Failed to resume crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function stopTendersCrawler() {
+    try {
+        const data = await apiCall('/crawler/tenders/stop', { method: 'POST' });
+        if (data.success) {
+            alert('Tenders Crawler stopped!');
+            await refreshTendersCrawlerStatus();
+            stopTendersAutoRefresh();
+        } else {
+            alert(`Failed to stop crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function refreshTendersCrawlerStatus() {
+    try {
+        const data = await apiCall('/crawler/tenders/status');
+        if (data.success) {
+            updateTendersCrawlerUI(data.status || data.data, data.current_job);
+        }
+    } catch (error) { console.error('Error fetching Tenders crawler status:', error); }
+}
+
+function updateTendersCrawlerUI(status, currentJob) {
+    const statusBadge = document.getElementById('tenders-crawler-status-badge');
+
+    if (currentJob && currentJob.status === 'running') {
+        statusBadge.className = 'status-badge status-running';
+        statusBadge.textContent = 'Running';
+    } else if (currentJob && currentJob.status === 'paused') {
+        statusBadge.className = 'status-badge status-paused';
+        statusBadge.textContent = 'Paused';
+    } else if (status.last_error) {
+        statusBadge.className = 'status-badge status-failed';
+        statusBadge.textContent = 'Error';
+    } else {
+        statusBadge.className = 'status-badge status-completed';
+        statusBadge.textContent = 'Idle';
+    }
+
+    if (currentJob && (currentJob.status === 'running' || currentJob.status === 'paused')) {
+        document.getElementById('tenders-current-batch').textContent = currentJob.current_batch || 0;
+        document.getElementById('tenders-total-fetched').textContent = currentJob.total_fetched || 0;
+        document.getElementById('tenders-success-count').textContent = currentJob.success_count || 0;
+        document.getElementById('tenders-failed-count').textContent = currentJob.failed_count || 0;
+        document.getElementById('tenders-duplicate-count').textContent = currentJob.duplicate_count || 0;
+
+        const progress = currentJob.progress_percentage || 0;
+        document.getElementById('tenders-progress-fill').style.width = `${progress}%`;
+        document.getElementById('tenders-progress-percentage').textContent = `${progress}%`;
+        document.getElementById('tenders-progress-detail').textContent =
+            `Batch ${currentJob.current_batch || 1} - ${currentJob.total_fetched || 0} tenders fetched`;
+    }
+
+    const startBtn = document.getElementById('tenders-start-crawler-btn');
+    const pauseBtn = document.getElementById('tenders-pause-crawler-btn');
+    const stopBtn = document.getElementById('tenders-stop-crawler-btn');
+
+    if (currentJob && currentJob.status === 'running') {
+        startBtn.style.display = 'none';
+        pauseBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'inline-block';
+    } else if (currentJob && currentJob.status === 'paused') {
+        startBtn.style.display = 'inline-block';
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+        startBtn.onclick = resumeTendersCrawler;
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+    } else {
+        startBtn.style.display = 'inline-block';
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Start Crawler';
+        startBtn.onclick = startTendersCrawler;
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+    }
+}
+
+async function loadTendersJobs(page = 1) {
+    const statusFilter = document.getElementById('tenders-job-status-filter').value;
+
+    try {
+        const data = await apiCall(`/crawler/tenders/jobs?page=${page}&limit=10&status=${statusFilter}`);
+
+        if (data.success) {
+            const tbody = document.getElementById('tenders-jobs-table-body');
+
+            if (data.data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center">No tenders found</td></tr>';
+            } else {
+                tbody.innerHTML = data.data.map(job => {
+                    const duration = job.completed_at
+                        ? Math.round((new Date(job.completed_at) - new Date(job.started_at)) / 1000)
+                        : Math.round((new Date() - new Date(job.started_at)) / 1000);
+
+                    return `
+                        <tr>
+                            <td>${new Date(job.started_at).toLocaleString()}</td>
+                            <td><span class="badge badge-${job.status}">${job.status}</span></td>
+                            <td>${job.batch_size}</td>
+                            <td>${job.total_fetched || 0}</td>
+                            <td class="success">${job.success_count || 0}</td>
+                            <td class="error">${job.failed_count || 0}</td>
+                            <td>${duration}s</td>
+                            <td>${job.progress_percentage || 0}%</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+            updateTendersPagination(data.pagination, page);
+        }
+    } catch (error) { console.error('Error loading Tenders jobs:', error); }
+}
+
+function updateTendersPagination(pagination, currentPage) {
+    const paginationDiv = document.getElementById('tenders-jobs-pagination');
+    if (!pagination || pagination.totalPages <= 1) {
+        paginationDiv.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    html += `<button ${currentPage === 1 ? 'disabled' : ''} onclick="loadTendersJobs(${currentPage - 1})">Previous</button>`;
+    for (let i = 1; i <= pagination.totalPages; i++) {
+        if (i === currentPage) html += `<button class="active">${i}</button>`;
+        else if (i === 1 || i === pagination.totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) html += `<button onclick="loadTendersJobs(${i})">${i}</button>`;
+        else if (i === currentPage - 3 || i === currentPage + 3) html += `<button disabled>...</button>`;
+    }
+    html += `<button ${currentPage === pagination.totalPages ? 'disabled' : ''} onclick="loadTendersJobs(${currentPage + 1})">Next</button>`;
+    paginationDiv.innerHTML = html;
+}
+
+function startTendersAutoRefresh() {
+    if (tendersCrawlerStatusInterval) return;
+    tendersCrawlerStatusInterval = setInterval(async () => {
+        await refreshTendersCrawlerStatus();
+        await loadTendersJobs();
+    }, 5000);
+}
+
+function stopTendersAutoRefresh() {
+    if (tendersCrawlerStatusInterval) {
+        clearInterval(tendersCrawlerStatusInterval);
+        tendersCrawlerStatusInterval = null;
+    }
+}
+
+// ============================================
+// RECRUITMENTS CRAWLER CONTROL
+// ============================================
+
+let recruitmentsCrawlerStatusInterval = null;
+
+async function startRecruitmentsCrawler() {
+    const batchSize = document.getElementById('recruitments-batch-size').value;
+    const location = document.getElementById('recruitments-target-location').value.trim();
+
+    try {
+        const data = await apiCall('/crawler/recruitments/start', {
+            method: 'POST',
+            body: JSON.stringify({ 
+                batch_size: parseInt(batchSize),
+                location: location || null
+            })
+        });
+
+        if (data.success) {
+            alert(`Recruitments Crawler started with batch size ${batchSize}!`);
+            await refreshRecruitmentsCrawlerStatus();
+            startRecruitmentsAutoRefresh();
+        } else {
+            alert(`Failed to start crawler: ${data.message}`);
+        }
+    } catch (error) {
+        alert('Error starting Recruitments crawler');
+        console.error(error);
+    }
+}
+
+async function pauseRecruitmentsCrawler() {
+    try {
+        const data = await apiCall('/crawler/recruitments/pause', { method: 'POST' });
+        if (data.success) {
+            alert('Recruitments Crawler paused!');
+            await refreshRecruitmentsCrawlerStatus();
+        } else {
+            alert(`Failed to pause crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function resumeRecruitmentsCrawler() {
+    try {
+        const data = await apiCall('/crawler/recruitments/resume', { method: 'POST' });
+        if (data.success) {
+            alert('Recruitments Crawler resumed!');
+            await refreshRecruitmentsCrawlerStatus();
+            startRecruitmentsAutoRefresh();
+        } else {
+            alert(`Failed to resume crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function stopRecruitmentsCrawler() {
+    try {
+        const data = await apiCall('/crawler/recruitments/stop', { method: 'POST' });
+        if (data.success) {
+            alert('Recruitments Crawler stopped!');
+            await refreshRecruitmentsCrawlerStatus();
+            stopRecruitmentsAutoRefresh();
+        } else {
+            alert(`Failed to stop crawler: ${data.message}`);
+        }
+    } catch (error) { console.error(error); }
+}
+
+async function refreshRecruitmentsCrawlerStatus() {
+    try {
+        const data = await apiCall('/crawler/recruitments/status');
+        if (data.success) {
+            updateRecruitmentsCrawlerUI(data.status || data.data, data.current_job);
+        }
+    } catch (error) { console.error('Error fetching Recruitments crawler status:', error); }
+}
+
+function updateRecruitmentsCrawlerUI(status, currentJob) {
+    const statusBadge = document.getElementById('recruitments-crawler-status-badge');
+
+    if (currentJob && currentJob.status === 'running') {
+        statusBadge.className = 'status-badge status-running';
+        statusBadge.textContent = 'Running';
+    } else if (currentJob && currentJob.status === 'paused') {
+        statusBadge.className = 'status-badge status-paused';
+        statusBadge.textContent = 'Paused';
+    } else if (status.last_error) {
+        statusBadge.className = 'status-badge status-failed';
+        statusBadge.textContent = 'Error';
+    } else {
+        statusBadge.className = 'status-badge status-completed';
+        statusBadge.textContent = 'Idle';
+    }
+
+    if (currentJob && (currentJob.status === 'running' || currentJob.status === 'paused')) {
+        document.getElementById('recruitments-current-batch').textContent = currentJob.current_batch || 0;
+        document.getElementById('recruitments-total-fetched').textContent = currentJob.total_fetched || 0;
+        document.getElementById('recruitments-success-count').textContent = currentJob.success_count || 0;
+        document.getElementById('recruitments-failed-count').textContent = currentJob.failed_count || 0;
+        document.getElementById('recruitments-duplicate-count').textContent = currentJob.duplicate_count || 0;
+
+        const progress = currentJob.progress_percentage || 0;
+        document.getElementById('recruitments-progress-fill').style.width = `${progress}%`;
+        document.getElementById('recruitments-progress-percentage').textContent = `${progress}%`;
+        document.getElementById('recruitments-progress-detail').textContent =
+            `Batch ${currentJob.current_batch || 1} - ${currentJob.total_fetched || 0} recruitments fetched`;
+    }
+
+    const startBtn = document.getElementById('recruitments-start-crawler-btn');
+    const pauseBtn = document.getElementById('recruitments-pause-crawler-btn');
+    const stopBtn = document.getElementById('recruitments-stop-crawler-btn');
+
+    if (currentJob && currentJob.status === 'running') {
+        startBtn.style.display = 'none';
+        pauseBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'inline-block';
+    } else if (currentJob && currentJob.status === 'paused') {
+        startBtn.style.display = 'inline-block';
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+        startBtn.onclick = resumeRecruitmentsCrawler;
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+    } else {
+        startBtn.style.display = 'inline-block';
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Start Crawler';
+        startBtn.onclick = startRecruitmentsCrawler;
+        pauseBtn.style.display = 'none';
+        stopBtn.style.display = 'none';
+    }
+}
+
+async function loadRecruitmentsJobs(page = 1) {
+    const statusFilter = document.getElementById('recruitments-job-status-filter').value;
+
+    try {
+        const data = await apiCall(`/crawler/recruitments/jobs?page=${page}&limit=10&status=${statusFilter}`);
+
+        if (data.success) {
+            const tbody = document.getElementById('recruitments-jobs-table-body');
+
+            if (data.data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center">No recruitments found</td></tr>';
+            } else {
+                tbody.innerHTML = data.data.map(job => {
+                    const duration = job.completed_at
+                        ? Math.round((new Date(job.completed_at) - new Date(job.started_at)) / 1000)
+                        : Math.round((new Date() - new Date(job.started_at)) / 1000);
+
+                    return `
+                        <tr>
+                            <td>${new Date(job.started_at).toLocaleString()}</td>
+                            <td><span class="badge badge-${job.status}">${job.status}</span></td>
+                            <td>${job.batch_size}</td>
+                            <td>${job.total_fetched || 0}</td>
+                            <td class="success">${job.success_count || 0}</td>
+                            <td class="error">${job.failed_count || 0}</td>
+                            <td>${duration}s</td>
+                            <td>${job.progress_percentage || 0}%</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+            updateRecruitmentsPagination(data.pagination, page);
+        }
+    } catch (error) { console.error('Error loading Recruitments jobs:', error); }
+}
+
+function updateRecruitmentsPagination(pagination, currentPage) {
+    const paginationDiv = document.getElementById('recruitments-jobs-pagination');
+    if (!pagination || pagination.totalPages <= 1) {
+        paginationDiv.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    html += `<button ${currentPage === 1 ? 'disabled' : ''} onclick="loadRecruitmentsJobs(${currentPage - 1})">Previous</button>`;
+    for (let i = 1; i <= pagination.totalPages; i++) {
+        if (i === currentPage) html += `<button class="active">${i}</button>`;
+        else if (i === 1 || i === pagination.totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) html += `<button onclick="loadRecruitmentsJobs(${i})">${i}</button>`;
+        else if (i === currentPage - 3 || i === currentPage + 3) html += `<button disabled>...</button>`;
+    }
+    html += `<button ${currentPage === pagination.totalPages ? 'disabled' : ''} onclick="loadRecruitmentsJobs(${currentPage + 1})">Next</button>`;
+    paginationDiv.innerHTML = html;
+}
+
+function startRecruitmentsAutoRefresh() {
+    if (recruitmentsCrawlerStatusInterval) return;
+    recruitmentsCrawlerStatusInterval = setInterval(async () => {
+        await refreshRecruitmentsCrawlerStatus();
+        await loadRecruitmentsJobs();
+    }, 5000);
+}
+
+function stopRecruitmentsAutoRefresh() {
+    if (recruitmentsCrawlerStatusInterval) {
+        clearInterval(recruitmentsCrawlerStatusInterval);
+        recruitmentsCrawlerStatusInterval = null;
+    }
+}
+
+// ============================================
 // LOGS
 // ============================================
 
@@ -493,6 +938,11 @@ if (token) {
 } else {
     showLogin();
 }
+
+// Add filter change listener for Pending Reviews
+document.getElementById('filter-type')?.addEventListener('change', () => {
+    loadPendingReviews();
+});
 
 // Modal close
 document.querySelector('.close')?.addEventListener('click', () => {

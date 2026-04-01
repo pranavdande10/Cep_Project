@@ -16,6 +16,7 @@ const scheduler = require('./services/scheduler');
 const publicRoutes = require('./routes/publicRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const schemeRoutes = require('./routes/schemeRoutes');
+const tenderRoutes = require('./routes/tenderRoutes');
 const eligibilityRoutes = require('./routes/eligibilityRoutes');
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/admin', express.static(path.join(__dirname, 'admin')));
 app.use('/api', publicRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/schemes', schemeRoutes);
+app.use('/api/tenders', tenderRoutes);
 app.use('/api/eligibility', eligibilityRoutes);
 
 // Health check

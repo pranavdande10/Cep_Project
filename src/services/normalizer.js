@@ -26,7 +26,7 @@ class Normalizer {
             tender_name: this.cleanText(rawData.tender_name || rawData.title || rawData.name),
             tender_id: rawData.tender_id || rawData.id || rawData.reference_no,
             reference_number: rawData.reference_number || rawData.ref_no,
-            state: state || rawData.state || 'Central',
+            state: this.extractState(rawData.location) || (state !== 'Central' && state ? state : null) || this.extractState(rawData.department) || this.extractState(rawData.tender_name) || 'Central',
             department: rawData.department || rawData.organization,
             ministry: rawData.ministry,
             tender_type: rawData.tender_type || rawData.type || 'Open Tender',
@@ -100,6 +100,57 @@ class Normalizer {
     static inferRegion(state) {
         if (!state || state === 'Central') return 'National';
         return 'State';
+    }
+
+    // Helper: Extract Indian State from text
+    static extractState(text) {
+        if (!text) return null;
+        const states = [
+            'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 
+            'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 
+            'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 
+            'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 
+            'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 
+            'Delhi', 'Jammu', 'Kashmir', 'Ladakh', 'Chandigarh', 'Puducherry'
+        ];
+        
+        const lowerText = text.toLowerCase();
+        for (const s of states) {
+            if (lowerText.includes(s.toLowerCase())) {
+                return s === 'Jammu' || s === 'Kashmir' ? 'Jammu and Kashmir' : s;
+            }
+        }
+        
+        // City & Organization Keyword Inference
+        const keywordMap = {
+            'Uttar Pradesh': ['lucknow', 'kanpur', 'varanasi', 'agra', 'noida', 'up jal nigam', 'allahabad', 'prayagraj', 'meerut', 'ghaziabad', 'aligarh', 'moradabad', 'saharanpur', 'gorakhpur'],
+            'Maharashtra': ['mumbai', 'pune', 'nagpur', 'thane', 'nashik', 'aurangabad', 'navi mumbai', 'mmrda', 'cidco', 'maha', 'pimpri', 'solapur', 'amravati', 'kolhapur', 'akola'],
+            'Karnataka': ['bangalore', 'bengaluru', 'mysore', 'mangalore', 'hubli', 'dharwad', 'belgaum', 'tumkur', 'davangere', 'bellary', 'kalaburagi'],
+            'Tamil Nadu': ['chennai', 'coimbatore', 'madurai', 'tiruchirappalli', 'salem', 'tirunelveli', 'tnpsc', 'tangedco', 'tiruppur', 'vellore', 'erode', 'thoothukudi', 'dindigul', 'thanjavur'],
+            'Kerala': ['thiruvananthapuram', 'kochi', 'kozhikode', 'kollam', 'thrissur', 'kssr', 'munnar', 'alappuzha', 'palakkad', 'kannur'],
+            'Telangana': ['hyderabad', 'warangal', 'nizamabad', 'tspsc', 'khammam', 'karimnagar', 'ramagundam'],
+            'Andhra Pradesh': ['visakhapatnam', 'vijayawada', 'guntur', 'nellore', 'kurnool', 'tirupati', 'rajamahendravaram', 'kakinada', 'anantapur'],
+            'Gujarat': ['ahmedabad', 'surat', 'vadodara', 'rajkot', 'bhavnagar', 'jamnagar', 'gandhinagar', 'junagadh'],
+            'West Bengal': ['kolkata', 'howrah', 'darjeeling', 'siliguri', 'asansol', 'durgapur', 'bardhaman', 'malda'],
+            'Rajasthan': ['jaipur', 'jodhpur', 'udaipur', 'kota', 'bikaner', 'ajmer', 'bhilwara', 'alwar'],
+            'Madhya Pradesh': ['bhopal', 'indore', 'gwalior', 'jabalpur', 'ujjain', 'sagar', 'dewas', 'satna'],
+            'Bihar': ['patna', 'gaya', 'bhagalpur', 'muzaffarpur', 'purnia', 'darbhanga'],
+            'Punjab': ['ludhiana', 'amritsar', 'jalandhar', 'patiala', 'bathinda', 'mohali'],
+            'Haryana': ['gurugram', 'faridabad', 'panipat', 'ambala', 'rohtak', 'hisar', 'karnal', 'kurukshetra'],
+            'Odisha': ['bhubaneswar', 'cuttack', 'rourkela', 'puri', 'berhampur'],
+            'Assam': ['guwahati', 'silchar', 'dibrugarh', 'jorhat', 'nagaon', 'tezpur'],
+            'Jharkhand': ['ranchi', 'jamshedpur', 'dhanbad', 'bokaro'],
+            'Chhattisgarh': ['raipur', 'bhilai', 'bilaspur', 'korba'],
+            'Uttarakhand': ['dehradun', 'haridwar', 'roorkee', 'haldwani']
+        };
+
+        for (const [state, keywords] of Object.entries(keywordMap)) {
+            if (keywords.some(kw => lowerText.includes(kw))) {
+                return state;
+            }
+        }
+        
+        return null;
     }
 }
 

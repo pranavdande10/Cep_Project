@@ -21,6 +21,31 @@ class SchemesCrawler extends BaseCrawler {
         this.isPaused = false;
         this.isStopped = false;
         this.currentJobId = null;
+        this.currentJobId = null;
+    }
+
+    /**
+     * Pause the crawler
+     */
+    pause() {
+        this.isPaused = true;
+        logger.info('Crawler pause requested');
+    }
+
+    /**
+     * Resume the crawler
+     */
+    resume() {
+        this.isPaused = false;
+        logger.info('Crawler resume requested');
+    }
+
+    /**
+     * Stop the crawler
+     */
+    stop() {
+        this.isStopped = true;
+        logger.info('Crawler stop requested');
     }
 
     /**
@@ -47,15 +72,58 @@ class SchemesCrawler extends BaseCrawler {
             logger.info('Discovering slugs...');
             let slugs = await this.discoverSlugs();
 
-            if (slugs.length === 0) {
-                logger.warn('Discovery failed or returned no schemes. Using fallback list.');
-                slugs = [
-                    'pmmy', 'sui', 'pmjdy', 'pmay', 'pmksy',
-                    'pmjjby', 'pmsby', 'apy', 'pmegp', 'nsap',
-                    'ayushman-bharat', 'swachh-bharat', 'skill-india',
-                    'make-in-india', 'digital-india', 'startup-india',
-                    'kisan-vikas-patra', 'sukanya-samriddhi-yojana'
+            if (this.isStopped) {
+                logger.info('Crawler stopped during discovery phase. Aborting.');
+                await this.completeCrawlerJob(this.currentJobId, 0);
+                await this.updateGlobalStatus(false, null);
+                return 0;
+            }
+
+            if (slugs.length < (this.batchSize || 50)) {
+                logger.warn(`Discovery returned only ${slugs.length} schemes. Appending fallback list to reach batch size.`);
+                const fallback = [
+                    // PM Schemes
+                    'pmkvy', 'pmsby', 'pmjjby', 'apy', 'pmegp', 'pmjdy', 'pmay', 
+                    'pmksy', 'pmmy', 'pm-kisan', 'pm-svp', 'pmfme', 'pmsvanidhi',
+                    'pm-matru-vandana-yojana', 'pm-poshan', 'pm-shram-yogi-maandhan',
+                    'pm-kisan-maan-dhan-yojana', 'pm-awas-yojana-gramin', 
+                    
+                    // Startup & Business
+                    'startup-india', 'standup-india', 'make-in-india', 'digital-india',
+                    'mudra-yojana', 'cgtmse', 'psb-loans-in-59-minutes',
+                    
+                    // Women & Children
+                    'sukanya-samriddhi-yojana', 'beti-bachao-beti-padhao', 
+                    'udayaan-care', 'mahila-e-haat', 'one-stop-centre-scheme',
+                    'women-helpline-scheme', 'working-women-hostel',
+                    
+                    // Education & Students
+                    'vidyanjali', 'mid-day-meal', 'national-means-cum-merit-scholarship',
+                    'central-sector-scheme-of-scholarships', 'udaan', 'pragati-scholarship',
+                    'saksham-scholarship', 'pm-yayasvi', 'nos-swd', 'post-dis',
+                    
+                    // Agriculture & Farmers
+                    'kisan-credit-card', 'soil-health-card', 'paramparagat-krishi-vikas-yojana',
+                    'national-agriculture-market', 'pradhan-mantri-faisal-bima-yojana',
+                    
+                    // Health & Insurance
+                    'ayushman-bharat', 'national-health-mission', 'esic', 'epfo',
+                    'central-government-health-scheme', 'aww', 'ni-kshay-poshan-yojana',
+                    
+                    // Senior Citizens & Pension
+                    'national-social-assistance-programme', 'atal-vayo-abhyuday-yojana',
+                    'varishtha-pension-bima-yojana', 'pradhan-mantri-vaya-vandana-yojana',
+                    
+                    // Housing & Infrastructure
+                    'swachh-bharat-mission', 'jal-jeevan-mission', 'hriday', 'amrut',
+                    'smart-cities-mission', 'saubhagya', 'ujala', 'ujjwala-yojana',
+                    
+                    // Miscellaneous
+                    'kisan-vikas-patra', 'national-savings-certificate', 'public-provident-fund',
+                    'senior-citizen-savings-scheme', 'post-office-monthly-income-scheme',
+                    'sl', 'sui', 'rmewf', 'rmewf-vocational-training', 'nps-tsep'
                 ];
+                slugs = [...new Set([...slugs, ...fallback])];
             }
 
             logger.info(`Found ${slugs.length} schemes to process.`);
@@ -70,6 +138,16 @@ class SchemesCrawler extends BaseCrawler {
             for (const slug of slugs) {
                 if (this.isStopped) break;
 
+                // Watch for external Database stop signals from Admin Dashboard
+                try {
+                    const statusCheck = await query('SELECT is_running FROM crawler_status WHERE id = 1');
+                    if (statusCheck.rows[0] && statusCheck.rows[0].is_running === false) {
+                        logger.info('External Stop signal received from database. Aborting CLI Crawler loop.');
+                        this.isStopped = true;
+                        break;
+                    }
+                } catch(e) {}
+
                 while (this.isPaused) {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
@@ -83,11 +161,19 @@ class SchemesCrawler extends BaseCrawler {
                     });
 
                     // Fetch and save
-                    const success = await this.fetchAndSaveScheme(slug);
-                    if (success) {
+                    const result = await this.fetchAndSaveScheme(slug);
+                    if (result === 'duplicate') {
+                        // Just skipped, don't count as failure or success
+                    } else if (result) {
                         totalFetched++;
                         // Increment success count
                         await query('UPDATE crawler_jobs SET success_count = success_count + 1 WHERE id = $1', [this.currentJobId]);
+                        
+                        // Stop if we reached the batch size requested by the user
+                        if (totalFetched >= (this.batchSize || 50)) {
+                            logger.info(`Reached requested batch size of ${this.batchSize || 50}. Stopping crawler loop.`);
+                            break;
+                        }
                     } else {
                         // Increment failed count
                         await query('UPDATE crawler_jobs SET failed_count = failed_count + 1 WHERE id = $1', [this.currentJobId]);
@@ -165,6 +251,12 @@ class SchemesCrawler extends BaseCrawler {
         logger.info('Paginating through MyScheme API...');
 
         while (true) {
+            if (this.isStopped) return Array.from(slugs);
+            while (this.isPaused) {
+                if (this.isStopped) return Array.from(slugs);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+
             try {
                 const url = `${this.apiBase}?limit=${limit}&offset=${offset}&lang=en`;
                 const response = await this.fetchWithRetry(url, {
@@ -247,6 +339,12 @@ class SchemesCrawler extends BaseCrawler {
             const maxClicks = 100; // Safety cap
 
             while (clickCount < maxClicks) {
+                if (this.isStopped) return Array.from(slugs);
+                while (this.isPaused) {
+                    if (this.isStopped) return Array.from(slugs);
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+
                 // Collect current slugs
                 const hrefs = await page.evaluate(() =>
                     Array.from(document.querySelectorAll('a[href^="/schemes/"]'))
@@ -315,14 +413,27 @@ class SchemesCrawler extends BaseCrawler {
         const response = await this.fetchWithRetry(url, { headers });
 
         if (response.status === 200 && response.data && response.data.statusCode === 200 && response.data.data) {
-            const schemeData = response.data.data;
+            let schemeData = response.data.data;
+            
+            // Handle paginated list endpoint returning an array of 1 element
+            if (Array.isArray(schemeData)) {
+                schemeData = schemeData[0];
+            }
+
+            if (!schemeData) {
+                logger.warn(`API returned 200 but no scheme found for ${slug}`);
+                return false;
+            }
 
             // Normalize
             const normalized = this.normalizeScheme(schemeData);
 
             if (normalized) {
                 // Save to DB
-                await this.saveScheme(normalized);
+                const saved = await this.saveScheme(normalized);
+                if (saved === 'duplicate') {
+                    return 'duplicate';
+                }
                 logger.info(`Successfully processed scheme: ${slug}`);
                 return true;
             }

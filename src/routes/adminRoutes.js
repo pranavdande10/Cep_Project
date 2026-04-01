@@ -40,9 +40,26 @@ router.get('/crawl-jobs/:id', verifyToken, crawlerController.getCrawlJobById);
 // MyScheme Crawler Control (Enhanced)
 router.post('/crawler/myscheme/start', verifyToken, crawlerController.startMySchemeCrawler);
 router.post('/crawler/myscheme/pause', verifyToken, crawlerController.pauseMySchemeCrawler);
+router.post('/crawler/myscheme/resume', verifyToken, crawlerController.resumeMySchemeCrawler);
 router.post('/crawler/myscheme/stop', verifyToken, crawlerController.stopMySchemeCrawler);
 router.get('/crawler/myscheme/status', verifyToken, crawlerController.getMySchemeCrawlerStatus);
 router.get('/crawler/myscheme/jobs', verifyToken, crawlerController.getMySchemeJobs);
+
+// Tenders Crawler Control
+router.post('/crawler/tenders/start', verifyToken, crawlerController.startTendersCrawler);
+router.post('/crawler/tenders/pause', verifyToken, crawlerController.pauseTendersCrawler);
+router.post('/crawler/tenders/resume', verifyToken, crawlerController.resumeTendersCrawler);
+router.post('/crawler/tenders/stop', verifyToken, crawlerController.stopTendersCrawler);
+router.get('/crawler/tenders/status', verifyToken, crawlerController.getTendersCrawlerStatus);
+router.get('/crawler/tenders/jobs', verifyToken, crawlerController.getTendersJobs);
+
+// Recruitments Crawler Control
+router.post('/crawler/recruitments/start', verifyToken, crawlerController.startRecruitmentsCrawler);
+router.post('/crawler/recruitments/pause', verifyToken, crawlerController.pauseRecruitmentsCrawler);
+router.post('/crawler/recruitments/resume', verifyToken, crawlerController.resumeRecruitmentsCrawler);
+router.post('/crawler/recruitments/stop', verifyToken, crawlerController.stopRecruitmentsCrawler);
+router.get('/crawler/recruitments/status', verifyToken, crawlerController.getRecruitmentsCrawlerStatus);
+router.get('/crawler/recruitments/jobs', verifyToken, crawlerController.getRecruitmentsJobs);
 
 // Logs & Stats
 router.get('/logs', verifyToken, logsController.getAuditLogs);
