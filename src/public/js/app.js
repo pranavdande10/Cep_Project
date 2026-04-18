@@ -48,7 +48,10 @@ const moduleConfigs = {
         title: 'Latest Tenders',
         description: 'Explore business opportunities with the government.',
         api: '/api/tenders',
-        renderItem: (item) => `
+        renderItem: (item) => {
+            window.tenderCache = window.tenderCache || {};
+            window.tenderCache[item.id] = item;
+            return `
             <div class="item-card tender-detailed-card" style="border-left-color: #0d6efd; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; padding: 0; overflow: hidden; font-family: 'Inter', sans-serif;">
                 
                 <!-- Tender Overview Section -->
@@ -120,33 +123,91 @@ const moduleConfigs = {
 
                     <div style="margin-top: 25px; display: flex; justify-content: space-between; align-items: center;">
                         <span style="font-size: 0.85rem; color: #6c757d;"><i class="fas fa-globe"></i> Source: ${item.source_website || 'Government Portal'}</span>
-                        <a href="${item.source_url}" target="_blank" class="btn" style="background-color: #0d6efd; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s; box-shadow: 0 2px 4px rgba(13,110,253,0.3);"><i class="fas fa-search"></i> Search Portal (Use Ref No)</a>
+                        <div style="display: flex; gap: 10px;">
+                            ${item.extended_details ? `<button onclick="showTenderDetailsModal(${item.id})" class="btn" style="background-color: #198754; color: white; padding: 10px 24px; border: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; cursor:pointer; transition: background 0.3s; box-shadow: 0 2px 4px rgba(25,135,84,0.3);"><i class="fas fa-table"></i> Read Raw Details</button>` : ''}
+                            ${item.source_url && item.source_url.startsWith('/tender_docs') ? 
+                                `<a href="/tender-captcha.html?doc=${encodeURIComponent(item.source_url)}" target="_blank" class="btn" style="background-color: #fd7e14; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s; box-shadow: 0 2px 4px rgba(253,126,20,0.3);"><i class="fas fa-file-contract"></i> Tender Document</a>`
+                                : 
+                                `<a href="${item.source_url}" target="_blank" class="btn" style="background-color: #0d6efd; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s; box-shadow: 0 2px 4px rgba(13,110,253,0.3);"><i class="fas fa-search"></i> Web Portal</a>`
+                            }
+                        </div>
                     </div>
                 </div>
             </div>
-        `
+        `;
+        }
     },
     recruitments: {
         title: 'Government Recruitments',
         description: 'Build your career in the public sector.',
         api: '/api/recruitments',
-        renderItem: (item) => `
-            <div class="item-card" style="border-left-color: #6f42c1;">
-                <h3>${item.post_name}</h3>
-                <div class="item-meta">
-                    <span><i class="fas fa-university"></i> ${item.organization}</span>
-                    <span><i class="fas fa-users"></i> Vacancies: ${item.vacancy_count}</span>
-                    <span><i class="fas fa-calendar-check"></i> Deadline: ${item.application_end_date}</span>
+        renderItem: (item) => {
+            let applyLink = item.source_url;
+            if (applyLink && applyLink.includes('betacloud.ncs.gov.in/job-listing/')) {
+                applyLink = 'https://betacloud.ncs.gov.in/job-listing';
+            }
+            return `
+            <div class="item-card tender-detailed-card" style="border-left-color: #6f42c1; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 2rem; padding: 0; overflow: hidden; font-family: 'Inter', sans-serif;">
+                
+                <!-- Overview Section -->
+                <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 15px 20px; border-bottom: 2px solid #6f42c1;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                        <h3 style="margin: 0; color: #212529; font-size: 1.3rem; line-height: 1.4; flex: 1;">${item.post_name}</h3>
+                        <span style="background: #e0cffc; color: #6f42c1; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; white-space: nowrap;">Vacancies: ${item.vacancy_count || 0}</span>
+                    </div>
+                    <div style="display: flex; gap: 20px; margin-top: 12px; color: #495057; font-size: 0.9rem; flex-wrap: wrap;">
+                        <span><i class="fas fa-university" style="color: #6c757d;"></i> <strong>Body:</strong> ${item.organization}</span>
+                        <span><i class="fas fa-map-marker-alt" style="color: #dc3545;"></i> <strong>Location:</strong> ${item.state || 'All India'}</span>
+                    </div>
                 </div>
-                <div style="margin-top: 1rem;">
-                    <strong>Qualification:</strong> ${item.qualification || 'Not Specified'} | <strong>Age Limit:</strong> ${item.age_limit || 'Not Specified'}
-                </div>
-                <div style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center; padding-top: 1rem; border-top: 1px solid #eee;">
-                    <span style="font-size: 0.85rem; color: #6c757d;"><i class="fas fa-globe"></i> Source: ${item.source_website || 'Government Portal'}</span>
-                    <a href="${item.source_url}" target="_blank" class="btn-link" style="color: #6f42c1; text-decoration: none; font-weight: 600;">Apply Now <i class="fas fa-external-link-alt"></i></a>
+                
+                <div style="padding: 20px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        
+                        <!-- Timeline Section -->
+                        <div class="info-section">
+                            <h4 style="margin: 0 0 10px 0; color: #0d6efd; border-bottom: 1px solid #dee2e6; padding-bottom: 5px; font-size: 1.05rem;"><i class="fas fa-calendar-alt"></i> Timeline</h4>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                                <tr><td style="padding: 4px 0; color: #6c757d;">Start Date</td><td style="padding: 4px 0; text-align: right; font-weight: 500;">${item.application_start_date ? new Date(item.application_start_date).toLocaleDateString() : 'Not Announced'}</td></tr>
+                                <tr><td style="padding: 4px 0; color: #dc3545; font-weight: 600;">Last Date</td><td style="padding: 4px 0; text-align: right; color: #dc3545; font-weight: bold;">${item.application_end_date ? new Date(item.application_end_date).toLocaleDateString() : 'N/A'}</td></tr>
+                            </table>
+                        </div>
+
+                        <!-- Eligibility Section -->
+                        <div class="info-section">
+                            <h4 style="margin: 0 0 10px 0; color: #fd7e14; border-bottom: 1px solid #dee2e6; padding-bottom: 5px; font-size: 1.05rem;"><i class="fas fa-user-graduate"></i> Eligibility</h4>
+                            <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem; color: #495057;">
+                                <li style="margin-bottom: 4px;"><strong>Qualification:</strong> ${item.qualification || 'Not Specified'}</li>
+                                <li style="margin-bottom: 4px;"><strong>Age Limit:</strong> ${item.age_limit || 'Not Specified'}</li>
+                            </ul>
+                        </div>
+
+                        <!-- Selection & Process Section -->
+                        <div class="info-section" style="grid-column: 1 / -1; margin-top: -10px;">
+                            <h4 style="margin: 0 0 10px 0; color: #198754; border-bottom: 1px solid #dee2e6; padding-bottom: 5px; font-size: 1.05rem;"><i class="fas fa-list-check"></i> Details</h4>
+                            <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem; color: #495057;">
+                                <li style="margin-bottom: 4px;"><strong>Process & Pay:</strong> ${item.selection_process || 'Refer to notification'}</li>
+                                <li style="margin-bottom: 4px;"><strong>Application Fee:</strong> ${item.application_fee || 'Not Specified'}</li>
+                            </ul>
+                        </div>
+
+                    </div>
+
+                    <div style="margin-top: 25px; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.85rem; color: #6c757d;"><i class="fas fa-globe"></i> Source: ${item.source_website || 'Government Portal'}</span>
+                        <div style="display: flex; gap: 10px;">
+                            ${item.official_notification_link ? `
+                                <a href="${applyLink}" target="_blank" class="btn" style="background-color: #6c757d; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s;"><i class="fas fa-info-circle"></i> View Summary</a>
+                                <a href="${item.official_notification_link}" target="_blank" class="btn" style="background-color: #6f42c1; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s; box-shadow: 0 2px 4px rgba(111,66,193,0.3);"><i class="fas fa-external-link-alt"></i> Apply / Official</a>
+                            ` : `
+                                <a href="${applyLink}" target="_blank" class="btn" style="background-color: #6f42c1; color: white; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.95rem; transition: background 0.3s; box-shadow: 0 2px 4px rgba(111,66,193,0.3);"><i class="fas fa-external-link-alt"></i> Apply / View Info</a>
+                            `}
+                        </div>
+                    </div>
                 </div>
             </div>
-        `
+        `;
+        }
     }
 };
 
@@ -186,7 +247,8 @@ function renderStates() {
 }
 
 window.selectState = (state) => {
-    currentState = state === 'All India' ? null : state;
+    // Map "All India" directly to "Central" which is what the database holds
+    currentState = (state === 'All India') ? 'Central' : state;
     currentPage = 1;
     document.getElementById('states-grid').classList.add('hidden');
     
@@ -357,3 +419,37 @@ function backToStates() {
     document.getElementById('states-grid').classList.remove('hidden');
     document.getElementById('data-view').classList.add('hidden');
 }
+
+window.showTenderDetailsModal = (id) => {
+    const tender = window.tenderCache[id];
+    if (!tender || !tender.extended_details) return;
+
+    try {
+        const details = typeof tender.extended_details === 'string' ? JSON.parse(tender.extended_details) : tender.extended_details;
+        
+        let htmlContent = '<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">';
+        
+        for (const [key, value] of Object.entries(details)) {
+            if (value && String(value).trim() !== '') {
+                htmlContent += `
+                    <tr style="border-bottom: 1px solid #dee2e6;">
+                        <td style="padding: 12px; font-weight: 600; color: #495057; width: 40%; background-color: #f8f9fa;">${key}</td>
+                        <td style="padding: 12px; color: #212529;">${value}</td>
+                    </tr>
+                `;
+            }
+        }
+        
+        htmlContent += '</table>';
+        
+        document.getElementById('tender-modal-title').innerHTML = `<i class="fas fa-file-contract"></i> ${tender.reference_number || tender.tender_id || 'Tender Details'}`;
+        document.getElementById('tender-extended-content').innerHTML = htmlContent;
+        document.getElementById('tender-extended-modal').style.display = 'flex';
+    } catch(e) {
+        console.error('Error parsing extended details:', e);
+    }
+};
+
+window.closeTenderModal = () => {
+    document.getElementById('tender-extended-modal').style.display = 'none';
+};

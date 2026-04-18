@@ -51,14 +51,14 @@ class SchemesCrawler extends BaseCrawler {
     /**
      * Main crawl method with batch processing
      */
-    async execute() {
-        return await this.crawl();
+    async execute(locationStr = null) {
+        return await this.crawl(locationStr);
     }
 
     /**
      * Internal crawl method
      */
-    async crawl() {
+    async crawl(locationStr = null) {
         try {
             logger.info('Starting MyScheme crawler with Puppeteer discovery strategy');
 
@@ -69,8 +69,8 @@ class SchemesCrawler extends BaseCrawler {
             await this.updateGlobalStatus(true, this.currentJobId);
 
             // Step 1: Discover Slugs
-            logger.info('Discovering slugs...');
-            let slugs = await this.discoverSlugs();
+            logger.info(`Discovering slugs for location: ${locationStr || 'All'}...`);
+            let slugs = await this.discoverSlugs(locationStr);
 
             if (this.isStopped) {
                 logger.info('Crawler stopped during discovery phase. Aborting.');
@@ -88,6 +88,19 @@ class SchemesCrawler extends BaseCrawler {
                     'pm-matru-vandana-yojana', 'pm-poshan', 'pm-shram-yogi-maandhan',
                     'pm-kisan-maan-dhan-yojana', 'pm-awas-yojana-gramin', 
                     
+                    // State Government Schemes
+                    'ladli-behna-yojana', 'mukhyamantri-kanya-vivah-yojana', 'yuvashree',
+                    'mahatma-jyotirao-phule-karz-maafi', 'kalyana-lakshmi', 'rythu-bandhu',
+                    'mukhyamantri-seekho-kamao-yojana', 'kanyashree-prakalpa', 'swasthya-sathi',
+                    'krushak-assistance-for-livelihood-and-income-augmentation', 'jagananna-vidya-deevena',
+                    'ySR-raithu-bharosa', 'bhavantar-bharpai-yojana', 'mukhya-mantri-parivar-samriddhi-yojana',
+                    'dr-ysr-aarogyasri', 'ammavodi', 'chief-minister-solar-pump-yojana', 'shravan-bal-seva-rajya-nivrutti-vetan-yojana',
+                    
+                    // Specific prominent states
+                    'magel-tyala-shet-tale', 'sanjay-gandhi-niradhar-anudan-yojana', 'baliraja-chetana-abhiyan',
+                    'mukhyamantri-solar-pump-yojana', 'biju-swasthya-kalyan-yojana', 'madhubabu-pension-yojana',
+                    'gopabandhu-sambadika-swasthya-bima-yojana', 'kalia-scheme', 'mo-sarkar',
+
                     // Startup & Business
                     'startup-india', 'standup-india', 'make-in-india', 'digital-india',
                     'mudra-yojana', 'cgtmse', 'psb-loans-in-59-minutes',
@@ -153,6 +166,22 @@ class SchemesCrawler extends BaseCrawler {
                 }
 
                 try {
+                    // Quick DB check to avoid unnecessary API calls
+                    const existingApproved = await query('SELECT id FROM schemes WHERE slug = $1 LIMIT 1', [slug]);
+                    const existingPending = await query("SELECT id FROM crawl_results WHERE type='scheme' AND json_extract(normalized_data, '$.slug') = $1 LIMIT 1", [slug]);
+
+                    if (existingApproved.rows.length > 0 || existingPending.rows.length > 0) {
+                        // Skip without incrementing totalFetched so crawler hunts for actual new items
+                        await query('UPDATE crawler_jobs SET duplicate_count = duplicate_count + 1 WHERE id = $1', [this.currentJobId]);
+                        // Update current_batch just to show progress visually
+                        await this.updateJobProgress(this.currentJobId, {
+                            current_batch: currentBatch++,
+                            total_fetched: totalFetched,
+                            status: `Skipping duplicate ${slug}`
+                        });
+                        continue;
+                    }
+
                     // Update job status
                     await this.updateJobProgress(this.currentJobId, {
                         current_batch: currentBatch++,
@@ -162,25 +191,26 @@ class SchemesCrawler extends BaseCrawler {
 
                     // Fetch and save
                     const result = await this.fetchAndSaveScheme(slug);
+                    
                     if (result === 'duplicate') {
-                        // Just skipped, don't count as failure or success
+                        await query('UPDATE crawler_jobs SET duplicate_count = duplicate_count + 1 WHERE id = $1', [this.currentJobId]);
+                        // Don't increment totalFetched for duplicates, so batch size fills up with NEW schemes!
                     } else if (result) {
-                        totalFetched++;
-                        // Increment success count
                         await query('UPDATE crawler_jobs SET success_count = success_count + 1 WHERE id = $1', [this.currentJobId]);
-                        
-                        // Stop if we reached the batch size requested by the user
-                        if (totalFetched >= (this.batchSize || 50)) {
-                            logger.info(`Reached requested batch size of ${this.batchSize || 50}. Stopping crawler loop.`);
-                            break;
-                        }
+                        totalFetched++; // Only increment for newly saved schemes!
                     } else {
-                        // Increment failed count
                         await query('UPDATE crawler_jobs SET failed_count = failed_count + 1 WHERE id = $1', [this.currentJobId]);
+                        totalFetched++; // Count failures against the batch size so it doesn't loop forever if everything fails
+                    }
+
+                    // Stop if we reached the batch size requested by the user
+                    if (totalFetched >= (this.batchSize || 50)) {
+                        logger.info(`Reached requested batch size of ${totalFetched}. Stopping crawler loop.`);
+                        break;
                     }
 
                     // Respectful delay
-                    await new Promise(resolve => setTimeout(resolve, this.delayMs));
+                    await new Promise(resolve => setTimeout(resolve, this.delayMs || 500));
 
                 } catch (err) {
                     logger.error(`Failed to fetch scheme ${slug}:`, err.message);
@@ -211,12 +241,12 @@ class SchemesCrawler extends BaseCrawler {
         }
     }
 
-    async discoverSlugs() {
-        logger.info('Attempting slug discovery via API pagination...');
+    async discoverSlugs(locationStr = null) {
+        logger.info(`Attempting slug discovery. Location: ${locationStr || 'All'}`);
 
         // ── Strategy 1: API pagination (fastest, most complete) ──────────
-        const apiSlugs = await this.discoverSlugsViaAPI();
-        if (apiSlugs.length > 20) {
+        const apiSlugs = await this.discoverSlugsViaAPI(locationStr);
+        if (apiSlugs.length > 0) {
             logger.info(`API pagination found ${apiSlugs.length} slugs`);
             return apiSlugs;
         }
@@ -224,7 +254,7 @@ class SchemesCrawler extends BaseCrawler {
         logger.warn(`API pagination returned only ${apiSlugs.length} slugs — trying Puppeteer...`);
 
         // ── Strategy 2: Puppeteer with Load More button clicking ──────────
-        const puppeteerSlugs = await this.discoverSlugsViaPuppeteer();
+        const puppeteerSlugs = await this.discoverSlugsViaPuppeteer(locationStr);
         if (puppeteerSlugs.length > 0) {
             // Merge both results
             const merged = new Set([...apiSlugs, ...puppeteerSlugs]);
@@ -232,23 +262,20 @@ class SchemesCrawler extends BaseCrawler {
             return Array.from(merged);
         }
 
-        // ── Strategy 3: API slugs alone (even if small) ──────────────────
-        if (apiSlugs.length > 0) {
-            return apiSlugs;
-        }
-
         logger.warn('All discovery strategies failed — using hardcoded fallback list');
         return [];
     }
 
     // Discover slugs by calling the API with limit/offset pagination
-    async discoverSlugsViaAPI() {
+    async discoverSlugsViaAPI(locationStr = null) {
         const slugs = new Set();
-        const limit = 100;
-        let offset = 0;
+        const size = 100;
+        let from = 0;
         let consecutiveFailures = 0;
 
-        logger.info('Paginating through MyScheme API...');
+        logger.info('Paginating through MyScheme Search API...');
+        
+        const keyword = locationStr ? encodeURIComponent(locationStr) : '';
 
         while (true) {
             if (this.isStopped) return Array.from(slugs);
@@ -258,49 +285,46 @@ class SchemesCrawler extends BaseCrawler {
             }
 
             try {
-                const url = `${this.apiBase}?limit=${limit}&offset=${offset}&lang=en`;
+                const url = `https://api.myscheme.gov.in/search/v6/schemes?lang=en&q=%5B%5D&keyword=${keyword}&sort=&from=${from}&size=${size}`;
                 const response = await this.fetchWithRetry(url, {
                     headers: {
-                        'x-api-key': this.apiKey || 'tYTy5eEhlu9rFjyxuCr7ra7ACp4dv1RH8gWuHTDc'
+                        'x-api-key': this.apiKey || 'tYTy5eEhlu9rFjyxuCr7ra7ACp4dv1RH8gWuHTDc',
+                        'accept': 'application/json, text/plain, */*',
+                        'origin': 'https://www.myscheme.gov.in'
                     },
                     timeout: 15000
                 });
 
                 const data = response?.data;
 
-                // Handle array response
-                if (data?.data && Array.isArray(data.data)) {
-                    const batch = data.data;
+                // Handle search response
+                if (data?.data?.hits && Array.isArray(data.data.hits.items)) {
+                    const batch = data.data.hits.items;
                     if (batch.length === 0) break; // No more results
 
                     batch.forEach(scheme => {
-                        if (scheme.slug) slugs.add(scheme.slug);
+                        if (scheme.fields?.slug) slugs.add(scheme.fields.slug);
                     });
 
-                    logger.info(`API offset=${offset}: got ${batch.length} schemes (total so far: ${slugs.size})`);
+                    logger.info(`API from=${from}: got ${batch.length} schemes (total so far: ${slugs.size})`);
 
-                    if (batch.length < limit) break; // Last page
-                    offset += limit;
+                    if (batch.length < size) break; // Last page
+                    from += size;
                     consecutiveFailures = 0;
-
-                // Handle single scheme response (slug endpoint — wrong mode)
-                } else if (data?.data && data.data._id) {
-                    logger.warn('API returned single scheme — list endpoint not supported at this offset');
-                    break;
 
                 } else {
                     consecutiveFailures++;
                     if (consecutiveFailures >= 3) break;
-                    offset += limit;
+                    from += size;
                 }
 
                 await new Promise(r => setTimeout(r, 500));
 
             } catch (err) {
-                logger.warn(`API pagination error at offset=${offset}: ${err.message}`);
+                logger.warn(`API pagination error at from=${from}: ${err.message}`);
                 consecutiveFailures++;
                 if (consecutiveFailures >= 3) break;
-                offset += limit;
+                from += size;
             }
         }
 
@@ -308,7 +332,7 @@ class SchemesCrawler extends BaseCrawler {
     }
 
     // Discover slugs via Puppeteer — clicks "Load More" button repeatedly
-    async discoverSlugsViaPuppeteer() {
+    async discoverSlugsViaPuppeteer(locationStr = null) {
         let browser;
         const slugs = new Set();
 
@@ -320,8 +344,12 @@ class SchemesCrawler extends BaseCrawler {
             const page = await browser.newPage();
             await page.setDefaultNavigationTimeout(60000);
 
-            logger.info('Puppeteer: navigating to search page...');
-            await page.goto('https://www.myscheme.gov.in/search', {
+            let targetUrl = 'https://www.myscheme.gov.in/search';
+            if (locationStr) {
+                targetUrl = `https://www.myscheme.gov.in/search?q=${encodeURIComponent(locationStr)}`;
+            }
+            logger.info(`Puppeteer: navigating to search page: ${targetUrl}...`);
+            await page.goto(targetUrl, {
                 waitUntil: 'networkidle2',
                 timeout: 60000
             });
@@ -607,8 +635,8 @@ class SchemesCrawler extends BaseCrawler {
 
         if (basicDetails.state) {
             return Array.isArray(basicDetails.state)
-                ? basicDetails.state
-                : [basicDetails.state];
+                ? basicDetails.state.map(s => typeof s === 'object' && s !== null ? (s.label || s.value) : s)
+                : [typeof basicDetails.state === 'object' && basicDetails.state !== null ? (basicDetails.state.label || basicDetails.state.value) : basicDetails.state];
         }
 
         return ['All India'];

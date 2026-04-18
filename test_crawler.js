@@ -1,15 +1,15 @@
 const SchemesCrawler = require('./src/services/crawlers/schemesCrawler');
+const crawler = new SchemesCrawler();
 
-async function test() {
-    console.log('--- Starting Crawler Test ---');
-    const crawler = new SchemesCrawler();
-    crawler.batchSize = 2;
+async function run() {
     try {
-        const result = await crawler.crawl();
-        console.log('Crawled Count:', result);
-    } catch (e) {
-        console.error('Crawler threw error:', e);
+        console.log("Starting crawler test...");
+        // Manually run a single job with limited batch size to debug
+         crawler.batchSize = 2; // test a tiny batch
+        const count = await crawler.execute();
+        console.log("Crawler finished. Fetched:", count);
+    } catch(err) {
+        console.error("Crawler error:", err);
     }
 }
-
-test();
+run();

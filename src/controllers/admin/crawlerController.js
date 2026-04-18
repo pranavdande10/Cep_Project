@@ -172,13 +172,15 @@ let mySchemeCrawlerInstance = null;
  */
 exports.startMySchemeCrawler = async (req, res, next) => {
     try {
-        const { batch_size = 50 } = req.body;
+        let { location = null } = req.body;
+        // Always prioritize the environment batch size if set, otherwise fallback to UI or 50
+        let batch_size = parseInt(process.env.CRAWLER_BATCH_SIZE) || parseInt(req.body.batch_size) || 50;
 
         // Validate batch size
-        if (batch_size < 10 || batch_size > 100) {
+        if (batch_size < 10 || batch_size > 5000) {
             return res.status(400).json({
                 success: false,
-                message: 'Batch size must be between 10 and 100'
+                message: 'Batch size must be between 10 and 5000'
             });
         }
 
@@ -200,7 +202,7 @@ exports.startMySchemeCrawler = async (req, res, next) => {
         mySchemeCrawlerInstance.batchSize = batch_size;
 
         // Start crawler in background
-        mySchemeCrawlerInstance.crawl().catch(error => {
+        mySchemeCrawlerInstance.crawl(location).catch(error => {
             logger.error('MyScheme crawler error:', error);
         });
 

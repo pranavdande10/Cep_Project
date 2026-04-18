@@ -53,15 +53,14 @@ class TendersCrawler {
                 return 0;
             }
 
-            // Cap to batch size
-            rawTenders = rawTenders.slice(0, this.batchSize);
-
+            // We don't cap rawTenders here. We iterate through them until we save up to batchSize NEW tenders.
             logger.info(`Found ${rawTenders.length} tenders to process.`);
 
             // Update estimated total
             await query('UPDATE crawler_jobs SET estimated_total = $1 WHERE id = $2', [rawTenders.length, this.currentJobId]);
 
-            let totalFetched = 0;
+            let totalSaved = 0;
+            let totalProcessed = 0;
             let currentBatch = 1;
 
             for (const tender of rawTenders) {
@@ -84,13 +83,13 @@ class TendersCrawler {
                 try {
                     await this.updateJobProgress(this.currentJobId, {
                         current_batch: currentBatch++,
-                        total_fetched: totalFetched,
+                        total_fetched: totalSaved,
                         status: `Processing ${tender.tender_name.substring(0, 30)}...`
                     });
 
                     // Avoid expensive Deep Scrape if already duplicate
                     if (await this.isDuplicateTender(tender.tender_name, tender.tender_id)) {
-                        totalFetched++;
+                        totalProcessed++;
                         await query('UPDATE crawler_jobs SET duplicate_count = duplicate_count + 1 WHERE id = $1', [this.currentJobId]);
                         continue;
                     }
@@ -101,20 +100,20 @@ class TendersCrawler {
                     const normalized = this.normalizeTender(detailedTender, locationStr || 'Central');
                     const result = await this.saveTender(normalized);
 
+                    totalProcessed++;
+                    
                     if (result === 'duplicate') {
                         // Edge case fallback
-                        totalFetched++;
                         await query('UPDATE crawler_jobs SET duplicate_count = duplicate_count + 1 WHERE id = $1', [this.currentJobId]);
                     } else if (result) {
-                        totalFetched++;
+                        totalSaved++;
                         await query('UPDATE crawler_jobs SET success_count = success_count + 1 WHERE id = $1', [this.currentJobId]);
                         
-                        if (totalFetched >= this.batchSize) {
-                            logger.info(`Reached requested batch size of ${this.batchSize}. Stopping crawler loop.`);
+                        if (totalSaved >= this.batchSize) {
+                            logger.info(`Reached requested batch size of ${this.batchSize} NEW tenders. Stopping crawler loop.`);
                             break;
                         }
                     } else {
-                        totalFetched++;
                         await query('UPDATE crawler_jobs SET failed_count = failed_count + 1 WHERE id = $1', [this.currentJobId]);
                     }
 
@@ -126,11 +125,11 @@ class TendersCrawler {
             }
 
             // Mark job as completed
-            await this.completeCrawlerJob(this.currentJobId, totalFetched);
+            await this.completeCrawlerJob(this.currentJobId, totalSaved);
             await this.updateGlobalStatus(false, null);
 
-            logger.info(`Tenders crawler completed successfully. Total fetched: ${totalFetched}`);
-            return totalFetched;
+            logger.info(`Tenders crawler completed successfully. Total processed: ${totalProcessed}. New saved: ${totalSaved}`);
+            return totalSaved;
 
         } catch (error) {
             logger.error('Tenders Crawler error:', error);
@@ -156,7 +155,7 @@ class TendersCrawler {
             const targetFeeds = ['cpppdata', 'mmpdata'];
             
             for (const feed of targetFeeds) {
-                for (let pageNum = 1; pageNum <= 2; pageNum++) {
+                for (let pageNum = 1; pageNum <= 6; pageNum++) {
                     const targetUrl = `https://eprocure.gov.in/cppp/latestactivetendersnew/${feed}?page=${pageNum}`;
                     logger.info(`Puppeteer: Scraping Feed ${feed} Page ${pageNum}...`);
                     
@@ -202,7 +201,7 @@ class TendersCrawler {
                                 department: row.cells[5],
                                 closing_date: row.cells[2],
                                 source_website: 'https://eprocure.gov.in',
-                                source_url: row.link || targetUrl,
+                                source_url: `https://eprocure.gov.in/cppp/tendersearch#${tRef}`, // Append ID to satisfy unique constraint
                                 deep_link: row.link // Save the deep hyperlink for Deep Scraping
                             });
                         });
@@ -233,13 +232,19 @@ class TendersCrawler {
                     const cells = Array.from(row.querySelectorAll('td, th')).filter(c => c.innerText.trim());
                     if (cells.length === 2) {
                         const key = cells[0].innerText.trim().replace(/:\s*$/, '').replace(/\s+/g, ' ');
-                        if(!data[key]) data[key] = cells[1].innerText.trim();
+                        let val = cells[1].innerText.trim();
+                        if (cells[1].querySelector('a')) val = cells[1].querySelector('a').href;
+                        if(!data[key]) data[key] = val;
                     } else if (cells.length === 4) {
                         const key1 = cells[0].innerText.trim().replace(/:\s*$/, '').replace(/\s+/g, ' ');
-                        if(!data[key1]) data[key1] = cells[1].innerText.trim();
+                        let val1 = cells[1].innerText.trim();
+                        if (cells[1].querySelector('a')) val1 = cells[1].querySelector('a').href;
+                        if(!data[key1]) data[key1] = val1;
                         
                         const key2 = cells[2].innerText.trim().replace(/:\s*$/, '').replace(/\s+/g, ' ');
-                        if(!data[key2]) data[key2] = cells[3].innerText.trim();
+                        let val2 = cells[3].innerText.trim();
+                        if (cells[3].querySelector('a')) val2 = cells[3].querySelector('a').href;
+                        if(!data[key2]) data[key2] = val2;
                     }
                 });
                 return data;
@@ -247,10 +252,19 @@ class TendersCrawler {
             
             // Map the parsed dict to specific properties requested by User
             if (details['Work Description']) tender.description = details['Work Description'];
-            if (details['Tender Type']) tender.tender_type = details['Tender Type'];
+            else if (details['Title']) tender.description = details['Title'];
+
+            if (details['Tender Type'] || details['Tender Category']) {
+                 const typeArr = [];
+                 if(details['Tender Type']) typeArr.push(details['Tender Type']);
+                 if(details['Tender Category']) typeArr.push(details['Tender Category']);
+                 tender.tender_type = typeArr.join(' - ');
+            }
+            
             if (details['Location']) tender.location = details['Location'];
             if (details['Published Date']) tender.published_date = details['Published Date'];
             if (details['Bid Opening Date']) tender.opening_date = details['Bid Opening Date'];
+            if (details['Document Download / Sale End Date']) tender.closing_date = details['Document Download / Sale End Date'];
             
             // Build a sophisticated Fee/Financial string
             let financialStr = '';
@@ -258,17 +272,29 @@ class TendersCrawler {
                  financialStr += `Tender Value: ₹${details['Tender Value in ₹']}`;
             }
             if (details['EMD Amount in ₹'] && details['EMD Amount in ₹'] !== 'NA') {
-                 financialStr += (financialStr ? ' | ' : '') + `EMD: ₹${details['EMD Amount in ₹']}`;
+                 financialStr += (financialStr ? ' | ' : '') + `EMD Amount: ₹${details['EMD Amount in ₹']}`;
+            }
+            if (details['Tender Fee in ₹'] && details['Tender Fee in ₹'] !== 'NA') {
+                 financialStr += (financialStr ? ' | ' : '') + `Tender Fee: ₹${details['Tender Fee in ₹']}`;
             }
             if (details['Payment Mode']) {
                  financialStr += (financialStr ? ' | ' : '') + `Payment Mode: ${details['Payment Mode']}`;
             }
             if (financialStr) tender.fee_details = financialStr;
 
-            // Extract Documents section if needed
-            // tender.source_url = tender.deep_link; // Disabled: Eprocure deep links contain expiring session tokens causing "Invalid URL"
+            // Extract Documents required/Cover Details
+            if (details['Cover Details, No. Of Covers - 2'] || details['Cover Details, No. Of Covers - 1']) {
+                 tender.documents_required = 'Standard Technical & Financial Covers required. Please view official document.';
+            }
+
+            // Users preferred the official web portal over the local cached HTML mirror
+            // Keeping the original source_url which points to 'https://eprocure.gov.in/cppp/tendersearch'
+            // We append the tender_id as a hash to satisfy SQLite's UNIQUE(source_url) constraint
+            tender.source_url = `https://eprocure.gov.in/cppp/tendersearch#${tender.tender_id}`;
             
-            logger.info(`Puppeteer Deep Scraped: Extracted value/EMD for ${tender.tender_id}`);
+            tender.extended_details = JSON.stringify(details);
+
+            logger.info(`Puppeteer Deep Scraped: Extracted value/EMD/Category for ${tender.tender_id}`);
             
         } catch (err) {
             logger.warn(`Failed to deep scrape url ${tender.deep_link} for ${tender.tender_id}: ${err.message}`);

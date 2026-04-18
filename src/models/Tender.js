@@ -4,7 +4,7 @@ class TenderModel {
     static async getAll({ state, search, sort, limit = 10, offset = 0 }) {
         let queryText = `
       SELECT * FROM tenders 
-      WHERE status = 'approved'
+      WHERE status = 'approved' AND (closing_date IS NULL OR date(closing_date) >= date('now'))
     `;
         const params = [];
         let paramCount = 0;
@@ -39,7 +39,7 @@ class TenderModel {
         // Execute queries
         const result = await query(queryText, params);
 
-        let countQuery = `SELECT COUNT(*) as total FROM tenders WHERE status = 'approved'`;
+        let countQuery = `SELECT COUNT(*) as total FROM tenders WHERE status = 'approved' AND (closing_date IS NULL OR date(closing_date) >= date('now'))`;
         const countParams = [];
         let countParamCount = 0;
 
@@ -76,9 +76,9 @@ class TenderModel {
         tender_name, tender_id, reference_number, state, department, ministry,
         tender_type, published_date, opening_date, closing_date, description,
         documents_required, fee_details, source_url, source_website,
-        status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(source_url) DO UPDATE SET
+        status, created_at, extended_details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+      ON CONFLICT(tender_id) DO UPDATE SET
         tender_name = excluded.tender_name,
         tender_id = excluded.tender_id,
         reference_number = excluded.reference_number,
@@ -94,13 +94,14 @@ class TenderModel {
         fee_details = excluded.fee_details,
         source_website = excluded.source_website,
         status = excluded.status,
+        extended_details = excluded.extended_details,
         last_updated = CURRENT_TIMESTAMP`,
             [
                 data.tender_name, data.tender_id, data.reference_number, data.state,
                 data.department, data.ministry, data.tender_type, data.published_date,
                 data.opening_date, data.closing_date, data.description,
                 data.documents_required, data.fee_details, data.source_url,
-                data.source_website, 'approved'
+                data.source_website, 'approved', data.extended_details
             ]
         );
 
@@ -116,14 +117,14 @@ class TenderModel {
         tender_name = ?, tender_id = ?, reference_number = ?, state = ?, 
         department = ?, ministry = ?, tender_type = ?, published_date = ?, 
         opening_date = ?, closing_date = ?, description = ?, documents_required = ?, 
-        fee_details = ?, source_url = ?, source_website = ?, updated_at = CURRENT_TIMESTAMP
+        fee_details = ?, source_url = ?, source_website = ?, extended_details = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
             [
                 data.tender_name, data.tender_id, data.reference_number, data.state,
                 data.department, data.ministry, data.tender_type, data.published_date,
                 data.opening_date, data.closing_date, data.description,
                 data.documents_required, data.fee_details, data.source_url,
-                data.source_website, id
+                data.source_website, data.extended_details, id
             ]
         );
         return await this.getById(id);

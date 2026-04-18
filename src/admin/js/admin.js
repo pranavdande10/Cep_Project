@@ -253,11 +253,15 @@ let crawlerStatusInterval = null;
 
 async function startMySchemeCrawler() {
     const batchSize = document.getElementById('batch-size').value;
+    const location = document.getElementById('schemes-target-location')?.value?.trim();
 
     try {
         const data = await apiCall('/crawler/myscheme/start', {
             method: 'POST',
-            body: JSON.stringify({ batch_size: parseInt(batchSize) })
+            body: JSON.stringify({ 
+                batch_size: parseInt(batchSize),
+                location: location || null
+            })
         });
 
         if (data.success) {
